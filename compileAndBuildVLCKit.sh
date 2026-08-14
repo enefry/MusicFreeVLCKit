@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Copyright (C) Pierre d'Herbemont, 2010
 # Copyright (C) Felix Paul Kühne, 2012-2026
 
@@ -8,7 +8,7 @@ BUILD_DEVICE=yes
 BUILD_SIMULATOR=yes
 BUILD_FRAMEWORK=no
 SDK_VERSION=`xcrun --sdk iphoneos --show-sdk-version`
-SDK_MIN=9.0
+SDK_MIN=26.0
 VERBOSE=no
 DISABLEDEBUG=no
 CONFIGURATION="Debug"
@@ -25,12 +25,20 @@ OSVERSIONMINCFLAG=iphoneos
 OSVERSIONMINLDFLAG=ios
 ROOT_DIR=empty
 FARCH="all"
+VLC_BUILD_CONFIG="${VLC_BUILD_CONFIG:-}"
+BUILD_ROOT="${MUSICFREE_BUILD_ROOT:-}"
+VLC_BUILD_ROOT="${MUSICFREE_VLC_BUILD_ROOT:-}"
+INSTALL_ROOT="${MUSICFREE_INSTALL_ROOT:-}"
+PLUGIN_HEADER_ROOT="${MUSICFREE_PLUGIN_HEADER_ROOT:-}"
+DEVICE_STATIC_LIB="${MUSICFREE_VLC_DEVICE_STATIC_LIB:-}"
+SIMULATOR_STATIC_LIB="${MUSICFREE_VLC_SIMULATOR_STATIC_LIB:-}"
 
 if [ -z "$MAKEFLAGS" ]; then
     MAKEFLAGS="-j$(sysctl -n machdep.cpu.core_count || nproc)";
 fi
 
-TESTEDHASH="2cd870558" # libvlc hash that this version of VLCKit is build on
+TESTEDHASH="2cd8705589d3b125f236d1af695c3961fdcf6ca4" # libvlc base commit
+PATCHEDTREE="34c486a4b371e57b4d37bff288222c26fb86d8a0" # tree after MusicFree patch series
 
 usage()
 {
@@ -88,6 +96,15 @@ spushd()
 spopd()
 {
      popd 2>&1> /dev/null
+}
+
+run_xcodebuild()
+{
+     if [ "$VERBOSE" = "yes" ]; then
+         xcodebuild "$@"
+     else
+         xcodebuild "$@" > /dev/null
+     fi
 }
 
 info()
@@ -167,22 +184,30 @@ buildxcodeproj()
         deploymentTargetFlag="IPHONEOS_DEPLOYMENT_TARGET=${SDK_MIN}"
     fi
 
-    local defs="$GCC_PREPROCESSOR_DEFINITIONS"
+    # The static VLC archive and the Objective-C wrapper must use the same
+    # profile. Keep the inherited expansion literal for xcodebuild.
+    local defs="${GCC_PREPROCESSOR_DEFINITIONS:-}"
+    defs="${defs} MUSICFREE_AUDIO_PROFILE=1"
 
-    xcodebuild archive \
+    run_xcodebuild archive \
                -project "$1.xcodeproj" \
                -sdk $PLATFORM$SDK \
                -configuration ${CONFIGURATION} \
                -scheme "VLCKit" \
                -destination "generic/platform=${PLATFORMNAME}" \
-               -archivePath build/VLCKit-$PLATFORM$SDK.xcarchive \
+               -archivePath "${BUILD_ROOT}/VLCKit-$PLATFORM$SDK.xcarchive" \
+               -derivedDataPath "${BUILD_ROOT}/DerivedData-$PLATFORM" \
                ARCHS="${architectures}" \
                ${deploymentTargetFlag} \
                ${bitcodeflag} \
                ${verboseflag} \
+               GCC_PREPROCESSOR_DEFINITIONS="${defs}" \
+               MUSICFREE_VLC_INSTALL_ROOT="${INSTALL_ROOT}" \
+               MUSICFREE_VLC_DEVICE_STATIC_LIB="${DEVICE_STATIC_LIB}" \
+               MUSICFREE_VLC_SIMULATOR_STATIC_LIB="${SIMULATOR_STATIC_LIB}" \
+               MUSICFREE_PLUGIN_HEADER_ROOT="${PLUGIN_HEADER_ROOT}" \
                SKIP_INSTALL=no \
-               ONLY_ACTIVE_ARCH=NO \
-               > ${out}
+               ONLY_ACTIVE_ARCH=NO
 }
 
 buildLibVLC() {
@@ -211,12 +236,12 @@ buildLibVLC() {
     info "Compiling ${ARCH} with SDK version ${SDK_VERSION}, platform ${PLATFORM}"
 
     ACTUAL_ARCH=`get_actual_arch $ARCH`
-    BUILDDIR="${VLCROOT}/build-${PLATFORM}-${ACTUAL_ARCH}"
+    BUILDDIR="${VLC_BUILD_ROOT}/build-${PLATFORM}-${ACTUAL_ARCH}"
 
     mkdir -p ${BUILDDIR}
     spushd ${BUILDDIR}
 
-    ../extras/package/apple/build.sh --arch=$ARCH --sdk=${PLATFORM}${SDK_VERSION} ${DEBUGFLAG} ${VERBOSEFLAG} ${BITCODEFLAG} ${MAKEFLAGS}
+    "${VLCROOT}/extras/package/apple/build.sh" --arch=$ARCH --sdk=${PLATFORM}${SDK_VERSION} --config="${VLC_BUILD_CONFIG}" ${DEBUGFLAG} ${VERBOSEFLAG} ${BITCODEFLAG} ${MAKEFLAGS}
 
     spopd # builddir
 
@@ -323,11 +348,16 @@ function check_lipo {
         header=vlc-plugins-${os_style%os}-device-${os_arch}.h
     fi
 
-    build_dir="${VLCROOT}/build-${os_style}-${os_arch}"
+    build_dir="${VLC_BUILD_ROOT}/build-${os_style}-${os_arch}"
     if [ -d "${build_dir}" ]; then
+        if [ ! -f "${build_dir}/${VLCSTATICLIBRARYNAME}" ] || [ ! -f "${build_dir}/static-lib/static-module-list.c" ]; then
+            echo "*** Incomplete libVLC build at ${build_dir} ***" >&2
+            exit 1
+        fi
         VLCSTATICLIBS+=" ${build_dir}/${VLCSTATICLIBRARYNAME}"
         VLCSTATICMODULELIST="${build_dir}/static-lib/static-module-list.c"
-        cp $VLCSTATICMODULELIST $PROJECT_DIR/Headers/Internal/${header}
+        mkdir -p "${PLUGIN_HEADER_ROOT}"
+        cp "$VLCSTATICMODULELIST" "${PLUGIN_HEADER_ROOT}/${header}"
     else
         echo "Directory ${build_dir} doesn't exist"
     fi
@@ -339,13 +369,10 @@ build_simulator_static_lib() {
     info "building simulator static lib for $OSSTYLE"
 
     # remove old module list
-    rm -f $PROJECT_DIR/Headers/Internal/vlc-plugins-$OSSTYLE-simulator.h
-    touch $PROJECT_DIR/Headers/Internal/vlc-plugins-$OSSTYLE-simulator.h
-
-    spushd ${VLCROOT}
-    rm -rf install-$OSSTYLE-simulator
-    mkdir install-$OSSTYLE-simulator
-    spopd # vlc
+    mkdir -p "${PLUGIN_HEADER_ROOT}" "${INSTALL_ROOT}"
+    rm -f "${PLUGIN_HEADER_ROOT}/vlc-plugins-$OSSTYLE-simulator.h"
+    touch "${PLUGIN_HEADER_ROOT}/vlc-plugins-$OSSTYLE-simulator.h"
+    rm -f "${INSTALL_ROOT}/libvlc-simulator-static.a"
 
     VLCSTATICLIBS=""
     VLCSTATICLIBRARYNAME="static-lib/libvlc-full-static.a"
@@ -359,9 +386,7 @@ build_simulator_static_lib() {
     check_lipo "${OSSTYLE}" x86_64
 
     if [ ! -z "${VLCSTATICLIBS}" ]; then
-        spushd ${VLCROOT}
-        lipo $VLCSTATICLIBS -create -output install-$OSSTYLE-simulator/libvlc-simulator-static.a
-        spopd # VLCROOT
+        lipo $VLCSTATICLIBS -create -output "${INSTALL_ROOT}/libvlc-simulator-static.a"
     fi
 }
 
@@ -371,12 +396,9 @@ build_device_static_lib() {
     info "building device static lib for $OSSTYLE"
 
     # remove old module list
-    rm -f $PROJECT_DIR/Headers/Internal/vlc-plugins-$OSSTYLE-device*
-
-    spushd ${VLCROOT}
-    rm -rf install-$OSSTYLE-device
-    mkdir install-$OSSTYLE-device
-    spopd # vlc
+    mkdir -p "${PLUGIN_HEADER_ROOT}" "${INSTALL_ROOT}"
+    rm -f "${PLUGIN_HEADER_ROOT}/vlc-plugins-$OSSTYLE-device"*
+    rm -f "${INSTALL_ROOT}/libvlc-device-static.a"
 
     VLCSTATICLIBS=""
     VLCSTATICLIBRARYNAME="static-lib/libvlc-full-static.a"
@@ -395,9 +417,7 @@ build_device_static_lib() {
     check_lipo "${OSSTYLE}" arm64
 
     if [ ! -z "${VLCSTATICLIBS}" ]; then
-        spushd ${VLCROOT}
-        lipo $VLCSTATICLIBS -create -output install-$OSSTYLE-device/libvlc-device-static.a
-        spopd # VLCROOT
+        lipo $VLCSTATICLIBS -create -output "${INSTALL_ROOT}/libvlc-device-static.a"
     fi
 }
 
@@ -512,6 +532,14 @@ spushd .
 ROOT_DIR=`pwd`
 spopd
 
+if [ -z "${VLC_BUILD_CONFIG}" ]; then
+    VLC_BUILD_CONFIG="${ROOT_DIR}/Config/audio-ios.env"
+fi
+if [ ! -f "${VLC_BUILD_CONFIG}" ]; then
+    echo "*** Build configuration not found: ${VLC_BUILD_CONFIG} ***" >&2
+    exit 1
+fi
+
 if [ "$VLCROOT" = "" ]; then
     VLCROOT=${ROOT_DIR}/libvlc/vlc
     info "Preparing build dirs"
@@ -535,15 +563,48 @@ if [ "$VLCROOT" = "" ]; then
             cd ..
         else
             cd vlc
-            git fetch --all
-            git reset --hard ${TESTEDHASH}
-            git am ${ROOT_DIR}/libvlc/patches/*.patch
+            current_hash=`git rev-parse HEAD`
+            current_tree=`git rev-parse 'HEAD^{tree}'`
+            if [ "${current_tree}" = "${PATCHEDTREE}" ]; then
+                if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+                    echo "*** Refusing to reuse a dirty patched VLC checkout ***" >&2
+                    exit 1
+                fi
+                info "Reusing existing patched VLC checkout with tree ${PATCHEDTREE}"
+            elif [ "${current_hash}" = "${TESTEDHASH}" ]; then
+                if [ -n "$(git status --porcelain)" ]; then
+                    echo "*** Refusing to apply patches to a dirty VLC checkout at ${TESTEDHASH} ***" >&2
+                    exit 1
+                fi
+                info "Applying patches to the clean VLC baseline"
+                git am ${ROOT_DIR}/libvlc/patches/*.patch
+                current_tree=`git rev-parse 'HEAD^{tree}'`
+                if [ "${current_tree}" != "${PATCHEDTREE}" ]; then
+                    echo "*** Patched VLC tree ${current_tree} does not match expected ${PATCHEDTREE} ***" >&2
+                    exit 1
+                fi
+            else
+                echo "*** Refusing to reset or patch VLC checkout at ${current_hash}; expected base ${TESTEDHASH} or patched tree ${PATCHEDTREE} ***" >&2
+                exit 1
+            fi
             cd ..
         fi
     fi
 
     spopd
 fi
+
+BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/build-audio-ios}"
+VLC_BUILD_ROOT="${VLC_BUILD_ROOT:-${VLCROOT}/audio-ios-build}"
+INSTALL_ROOT="${INSTALL_ROOT:-${VLCROOT}/audio-ios-install}"
+PLUGIN_HEADER_ROOT="${PLUGIN_HEADER_ROOT:-${BUILD_ROOT}/generated-headers}"
+DEVICE_STATIC_LIB="${DEVICE_STATIC_LIB:-${INSTALL_ROOT}/libvlc-device-static.a}"
+SIMULATOR_STATIC_LIB="${SIMULATOR_STATIC_LIB:-${INSTALL_ROOT}/libvlc-simulator-static.a}"
+mkdir -p "${BUILD_ROOT}" "${VLC_BUILD_ROOT}" "${INSTALL_ROOT}" "${PLUGIN_HEADER_ROOT}"
+# The XCFramework assembly step changes into BUILD_ROOT. Normalize it before
+# constructing archive and dSYM paths so relative caller-provided roots do not
+# get duplicated after the directory change.
+BUILD_ROOT="$(CDPATH= cd -- "${BUILD_ROOT}" && pwd)"
 
 fetch_python3_path() {
     PYTHON3_PATH=$(echo /Library/Frameworks/Python.framework/Versions/3.*/bin | awk '{print $1;}')
@@ -565,7 +626,9 @@ if [ "$SKIPLIBVLCCOMPILATION" != "yes" ]; then
     info "Building tools"
 
     fetch_python3_path
-    export PATH="${PYTHON3_PATH}:${VLCROOT}/extras/tools/build/bin:${VLCROOT}/contrib/${TARGET}/bin:$VLC_PATH:/usr/bin:/bin:/usr/sbin:/sbin"
+    # Keep host tools deterministic. In particular, an inherited VLC_PATH can
+    # prepend stale binaries such as an incompatible external protoc.
+    export PATH="${PYTHON3_PATH}:${VLCROOT}/extras/tools/build/bin:${VLCROOT}/contrib/${TARGET}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
     spushd ${VLCROOT}/extras/tools
     ./bootstrap
@@ -616,8 +679,8 @@ if [ "$TVOS" = "yes" ]; then
     if [ "$FARCH" = "all" ] || (! is_simulator_arch $FARCH);then
         platform="appletvos"
         buildxcodeproj VLCKit ${platform} tvOS
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
-        bcsymbolmapfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/BCSymbolMaps
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        bcsymbolmapfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/BCSymbolMaps
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
         if [ -d ${bcsymbolmapfolder} ];then
             info "Bitcode support found"
@@ -629,15 +692,15 @@ if [ "$TVOS" = "yes" ]; then
             spopd
         fi
     fi
-    if [ "$FARCH" = "all" ] || (is_simulator_arch $arch);then
+    if [ "$FARCH" = "all" ] || (is_simulator_arch $FARCH);then
         platform="appletvsimulator"
         buildxcodeproj VLCKit ${platform} "tvOS Simulator"
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
 
     # Assumes both platforms were built currently
-    spushd build
+    spushd "$BUILD_ROOT"
     rm -rf tvOS
     mkdir tvOS
     xcodebuild -create-xcframework $frameworks -output tvOS/VLCKit.xcframework
@@ -653,8 +716,8 @@ if [ "$IOS" = "yes" ]; then
     if [ "$FARCH" = "all" ] || (! is_simulator_arch $FARCH);then
         platform="iphoneos"
         buildxcodeproj VLCKit ${platform} iOS
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
-        bcsymbolmapfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/BCSymbolMaps
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        bcsymbolmapfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/BCSymbolMaps
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
         if [ -d ${bcsymbolmapfolder} ];then
             info "Bitcode support found"
@@ -666,15 +729,15 @@ if [ "$IOS" = "yes" ]; then
             spopd
         fi
     fi
-    if [ "$FARCH" = "all" ] || (is_simulator_arch $arch);then
+    if [ "$FARCH" = "all" ] || (is_simulator_arch $FARCH);then
         platform="iphonesimulator"
         buildxcodeproj VLCKit ${platform} "iOS Simulator"
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
 
     # Assumes both platforms were built currently
-    spushd build
+    spushd "$BUILD_ROOT"
     rm -rf iOS
     mkdir iOS
     xcodebuild -create-xcframework $frameworks -output iOS/VLCKit.xcframework
@@ -690,18 +753,18 @@ if [ "$XROS" = "yes" ]; then
     if [ "$FARCH" = "all" ] || (! is_simulator_arch $FARCH);then
         platform="xros"
         buildxcodeproj VLCKit ${platform} xrOS
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
-    if [ "$FARCH" = "all" ] || (is_simulator_arch $arch);then
+    if [ "$FARCH" = "all" ] || (is_simulator_arch $FARCH);then
         platform="xrsimulator"
         buildxcodeproj VLCKit ${platform} "xrOS Simulator"
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
 
     # Assumes both platforms were built currently
-    spushd build
+    spushd "$BUILD_ROOT"
     rm -rf xrOS
     mkdir xrOS
     xcodebuild -create-xcframework $frameworks -output xrOS/VLCKit.xcframework
@@ -717,18 +780,18 @@ if [ "$WATCHOS" = "yes" ]; then
     if [ "$FARCH" = "all" ] || (! is_simulator_arch $FARCH);then
         platform="watchos"
         buildxcodeproj VLCKit ${platform} watchOS
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
-    if [ "$FARCH" = "all" ] || (is_simulator_arch $arch);then
+    if [ "$FARCH" = "all" ] || (is_simulator_arch $FARCH);then
         platform="watchsimulator"
         buildxcodeproj VLCKit ${platform} "watchOS Simulator"
-        dsymfolder=$PROJECT_DIR/build/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
+        dsymfolder=$BUILD_ROOT/VLCKit-${platform}.xcarchive/dSYMs/VLCKit.framework.dSYM
         frameworks="$frameworks -framework VLCKit-${platform}.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $dsymfolder"
     fi
 
     # Assumes both platforms were built currently
-    spushd build
+    spushd "$BUILD_ROOT"
     rm -rf watchOS
     mkdir watchOS
     xcodebuild -create-xcframework $frameworks -output watchOS/VLCKit.xcframework
@@ -745,7 +808,7 @@ if [ "$MACOS" = "yes" ]; then
     spushd build
     rm -rf macOS
     mkdir macOS
-    xcodebuild -create-xcframework -framework VLCKit-macosx.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols $PROJECT_DIR/build/VLCKit-macosx.xcarchive/dSYMs/VLCKit.framework.dSYM -output macOS/VLCKit.xcframework
+    xcodebuild -create-xcframework -framework VLCKit-macosx.xcarchive/Products/Library/Frameworks/VLCKit.framework -debug-symbols "$BUILD_ROOT/VLCKit-macosx.xcarchive/dSYMs/VLCKit.framework.dSYM" -output macOS/VLCKit.xcframework
     spopd # build
 
     info "Build of VLCKit.xcframework for macOS completed"

@@ -32,7 +32,6 @@
 #import <VLCLibVLCBridging.h>
 #import <VLCTime.h>
 #import <VLCMediaMetaData.h>
-#import <VLCMediaSlave.h>
 #import <vlc/libvlc.h>
 #import <sys/sysctl.h> // for sysctlbyname
 
@@ -331,40 +330,6 @@ void close_cb(void *opaque) {
     libvlc_media_add_option_flag(p_md, [option UTF8String], (unsigned)flags);
 }
 
-- (NSArray<VLCMediaSlave *> *)slaves
-{
-    libvlc_media_slave_t **pp_slaves = NULL;
-    const unsigned int count = libvlc_media_slaves_get(p_md, &pp_slaves);
-    if (count == 0)
-        return @[];
-
-    NSMutableArray<VLCMediaSlave *> *slaves = [NSMutableArray arrayWithCapacity:count];
-    for (unsigned int i = 0; i < count; i++) {
-        VLCMediaSlave *slave = [VLCMediaSlave mediaSlaveWithLibVLCSlave:pp_slaves[i]];
-        if (slave != nil)
-            [slaves addObject:slave];
-    }
-    libvlc_media_slaves_release(pp_slaves, count);
-    return slaves;
-}
-
-- (BOOL)addSlave:(VLCMediaSlave *)slave
-{
-    NSString *uri = slave.URL.absoluteString;
-    if (uri == nil)
-        return NO;
-
-    return libvlc_media_slaves_add(p_md,
-                                   (libvlc_media_slave_type_t)slave.type,
-                                   (unsigned int)slave.priority,
-                                   [uri UTF8String]) == 0;
-}
-
-- (void)clearSlaves
-{
-    libvlc_media_slaves_clear(p_md);
-}
-
 - (int)storeCookie:(NSString *)cookie
            forHost:(NSString *)host
               path:(NSString *)path
@@ -408,11 +373,15 @@ void close_cb(void *opaque) {
         .demuxBitrate       = p_stats.f_demux_bitrate,
         .demuxCorrupted     = p_stats.i_demux_corrupted,
         .demuxDiscontinuity = p_stats.i_demux_discontinuity,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
         .decodedVideo       = p_stats.i_decoded_video,
+#endif
         .decodedAudio       = p_stats.i_decoded_audio,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
         .displayedPictures  = p_stats.i_displayed_pictures,
         .latePictures       = p_stats.i_late_pictures,
         .lostPictures       = p_stats.i_lost_pictures,
+#endif
         .playedAudioBuffers = p_stats.i_played_abuffers,
         .lostAudioBuffers   = p_stats.i_lost_abuffers
     };
@@ -423,8 +392,13 @@ void close_cb(void *opaque) {
 {
     NSMutableArray<VLCMediaTrack *> *array = @[].mutableCopy;
     
+    // The audio profile exposes only the audio track category.
+#if defined(MUSICFREE_AUDIO_PROFILE)
+    for (libvlc_track_type_t type = libvlc_track_audio; type <= libvlc_track_audio; type++) {
+#else
     // 3 = (libvlc_track_audio = 0 | libvlc_track_video = 1 | libvlc_track_text = 2)
     for (libvlc_track_type_t type = 0; type < 3; type++) {
+#endif
         libvlc_media_tracklist_t *tracklist = libvlc_media_get_tracklist(p_md, type);
         if (!tracklist) continue;
         
@@ -551,6 +525,7 @@ void close_cb(void *opaque) {
 
 #pragma mark - Video Tracks
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (NSArray<VLCMediaTrack *> *)videoTracks
 {
     return [self _tracksForType: libvlc_track_video];
@@ -562,6 +537,7 @@ void close_cb(void *opaque) {
 {
     return [self _tracksForType: libvlc_track_text];
 }
+#endif
 
 #pragma mark - Private
 
@@ -612,10 +588,12 @@ void close_cb(void *opaque) {
 
     if (track->i_type == libvlc_track_audio && track->u.audio)
         _audio = [[VLCMediaAudioTrack alloc] initWithAudioTrack: track->u.audio];
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     else if (track->i_type == libvlc_track_video && track->u.video)
         _video = [[VLCMediaVideoTrack alloc] initWithVideoTrack: track->u.video];
     else if (track->i_type == libvlc_track_text && track->u.subtitle)
         _text = [[VLCMediaTextTrack alloc] initWithSubtitleTrack: track->u.subtitle];
+#endif
     return self;
 }
 
@@ -626,7 +604,11 @@ void close_cb(void *opaque) {
 
 - (NSString *)description
 {
+#if defined(MUSICFREE_AUDIO_PROFILE)
+    return [NSString stringWithFormat:@"<%@ %p>, codec: %d, fourcc: %d, codecName: %@, identifier: %d, profile: %d, level: %d, bitrate: %d, language: %@, trackDescription: %@, audio: %@", [self class], self, _codec, _fourcc, [self codecName], _identifier, _profile, _level, _bitrate, _language, _trackDescription, [_audio description]];
+#else
     return [NSString stringWithFormat:@"<%@ %p>, codec: %d, fourcc: %d, codecName: %@, identifier: %d, profile: %d, level: %d, bitrate: %d, language: %@, trackDescription: %@, audio: %@, video: %@, text: %@", [self class], self, _codec, _fourcc, [self codecName], _identifier, _profile, _level, _bitrate, _language, _trackDescription, [_audio description], [_video description], [_text description]];
+#endif
 }
 
 @end
@@ -657,6 +639,7 @@ void close_cb(void *opaque) {
 /******************************************************************************
  * Implementation VLCMediaVideoTrack
  */
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 @implementation VLCMediaVideoTrack
 
 - (nullable instancetype)initWithVideoTrack:(libvlc_video_track_t *)video
@@ -703,6 +686,7 @@ void close_cb(void *opaque) {
 }
 
 @end
+#endif
 
 /******************************************************************************
  * Implementation VLCMediaPlayerTrack

@@ -27,6 +27,9 @@
  *****************************************************************************/
 
 #import <Foundation/Foundation.h>
+#ifndef MUSICFREE_AUDIO_PROFILE
+#define MUSICFREE_AUDIO_PROFILE 1
+#endif
 #if TARGET_OS_IPHONE
 # import <UIKit/UIImage.h>
 #endif // TARGET_OS_IPHONE
@@ -34,13 +37,16 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, VLCMediaTrackType) NS_SWIFT_NAME(VLCMedia.TrackType);
-@class VLCLibrary, VLCMedia, VLCTime, VLCAudio, VLCMediaPlayer, VLCMediaPlayerTrack, VLCAdjustFilter, VLCAudioEqualizer, VLCMediaPlayerTitleDescription, VLCMediaPlayerChapterDescription, VLCProgramDescription;
+@class VLCLibrary, VLCMedia, VLCTime, VLCAudio, VLCMediaPlayer, VLCMediaPlayerTrack, VLCAudioEqualizer, VLCMediaPlayerTitleDescription, VLCMediaPlayerChapterDescription, VLCProgramDescription;
+#if !defined(MUSICFREE_AUDIO_PROFILE)
+@class VLCAdjustFilter;
 #if !TARGET_OS_IPHONE
 @class VLCVideoView, VLCVideoLayer;
 #endif // !TARGET_OS_IPHONE
 #if !TARGET_OS_TV
 @class VLCRendererItem;
 #endif // !TARGET_OS_TV
+#endif
 
 /* Notification Messages */
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerTimeChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.timeChangedNotification);
@@ -48,7 +54,9 @@ FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerStateChangedNotificatio
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerTitleSelectionChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.titleSelectionChangedNotification);
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerTitleListChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.titleListChangedNotification);
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerChapterChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.chapterChangedNotification);
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerSnapshotTakenNotification NS_SWIFT_NAME(VLCMediaPlayer.snapshotTakenNotification);
+#endif
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerProgramListChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.programListChangedNotification);
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerProgramSelectionChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.programSelectionChangedNotification);
 FOUNDATION_EXPORT NSNotificationName const VLCMediaPlayerCapabilitiesChangedNotification NS_SWIFT_NAME(VLCMediaPlayer.capabilitiesChangedNotification); ///< Notification message for when the player's capabilities (such as seekable or canPause) have changed
@@ -67,6 +75,7 @@ typedef NS_ENUM(NSInteger, VLCMediaPlayerState)
     VLCMediaPlayerStateError,          ///< Player has generated an error
 };
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * VLCMediaPlaybackNavigationAction describes actions which can be performed to navigate an interactive title
  */
@@ -102,6 +111,7 @@ typedef NS_ENUM(NSInteger, VLCMediaPlayerFrameStepResult)
     VLCMediaPlayerFrameStepResultInvalidState,      ///< The player is in an invalid state to step
     VLCMediaPlayerFrameStepResultCannotSeekBack,    ///< The player could not seek back (previous frame only)
 };
+#endif
 
 /**
  * Returns the name of the player state as a string.
@@ -215,6 +225,7 @@ NSString * VLCMediaPlayerStateToString(VLCMediaPlayerState state);
  */
 - (void)mediaPlayerProgramSelectionChanged:(NSNotification *)aNotification;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * Sent by the default notification center whenever a new snapshot is taken.
  * \details Discussion The value of aNotification is always an VLCMediaPlayerSnapshotTaken notification. You can retrieve
@@ -248,6 +259,7 @@ NSString * VLCMediaPlayerStateToString(VLCMediaPlayerState state);
  * @param result the outcome of the frame step
  */
 - (void)mediaPlayer:(VLCMediaPlayer *)player previousFrameSteppedWithResult:(VLCMediaPlayerFrameStepResult)result;
+#endif
 
 @end
 
@@ -267,7 +279,7 @@ OBJC_VISIBLE
  */
 @property (weak, nonatomic, nullable) id<VLCMediaPlayerDelegate> delegate;
 
-#if !TARGET_OS_IPHONE
+#if !defined(MUSICFREE_AUDIO_PROFILE) && !TARGET_OS_IPHONE
 /* Initializers */
 /**
  * initialize player with a given video view
@@ -301,6 +313,7 @@ OBJC_VISIBLE
  */
 - (instancetype)initWithLibVLCInstance:(void *)playerInstance andLibrary:(VLCLibrary *)library;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /* Video View Options */
 // TODO: Should be it's own object?
 
@@ -475,6 +488,8 @@ typedef NS_ENUM(NSInteger, VLCVideoFitMode) {
  */
 @property (NS_NONATOMIC_IOSONLY, readonly) BOOL hasVideoOut;
 
+#endif
+
 #pragma mark -
 #pragma mark time
 
@@ -512,6 +527,7 @@ typedef NS_ENUM(NSInteger, VLCVideoFitMode) {
  */
 @property (nonatomic) NSTimeInterval timeChangeUpdateInterval;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #pragma mark -
 #pragma mark ES track handling
 
@@ -544,6 +560,7 @@ typedef NS_ENUM(unsigned, VLCMediaPlaybackSlaveType)
 
 /** Set / get the subtitle font scale. */
 @property (readwrite) float currentSubTitleFontScale;
+#endif
 
 /**
  * Chapter selection and enumeration, it is bound
@@ -757,6 +774,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  */
 - (void)stop;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * Advance one frame.
  * \note The player must be playing or paused. If playing, it will be paused first.
@@ -770,6 +788,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  * \note Listen to -mediaPlayer:previousFrameSteppedWithResult: to be notified when the frame is displayed.
  */
 - (void)gotoPreviousFrame;
+#endif
 
 /**
  * Fast forwards through the feed at the standard 1x rate.
@@ -860,6 +879,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  */
 - (void)longJumpForward;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * performs navigation actions on interactive titles
  */
@@ -905,6 +925,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  * \return field of view in degrees ]0;180[ (default 80.)
  */
 @property (nonatomic) float fov;
+#endif
 
 #pragma mark -
 #pragma mark playback information
@@ -939,6 +960,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  */
 @property (NS_NONATOMIC_IOSONLY, readonly) BOOL canPause;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * Array of taken snapshots of the current video output
  * \return a NSArray of NSString instances containing the names
@@ -988,6 +1010,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  */
 - (BOOL)setRendererItem:(nullable VLCRendererItem *)item;
 #endif // !TARGET_OS_TV
+#endif
 @end
 
 #pragma mark - VLCMediaPlayer+Tracks
@@ -1002,6 +1025,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  */
 @property(nonatomic, readonly, copy) NSArray<VLCMediaPlayerTrack *> *audioTracks;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * videoTracks
  */
@@ -1039,6 +1063,7 @@ typedef NS_ENUM(unsigned, VLCAudioMixMode)
  * deselect all text tracks
  */
 - (void)deselectAllTextTracks;
+#endif
 
 @end
 

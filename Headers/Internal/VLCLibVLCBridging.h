@@ -29,13 +29,14 @@
 #import <VLCMediaPlayer.h>
 #import <VLCMediaList.h>
 #import <VLCMedia.h>
-#import <VLCMediaSlave.h>
 #import <VLCAudio.h>
 #import <VLCMediaMetaData.h>
 #import <VLCAudioEqualizer.h>
 #import <VLCMediaPlayerTitleDescription.h>
 #if !TARGET_OS_TV
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #import <VLCRendererItem.h>
+#endif
 #endif // !TARGET_OS_TV
 
 @class VLCEventsHandler;
@@ -180,7 +181,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (id)initWithMediaPlayer:(VLCMediaPlayer *)mediaPlayer;
 @end
 
-#if !TARGET_OS_TV
+#if !TARGET_OS_TV && !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * Bridges functionality between libvlc and VLCRendererItem implementation.
  */
@@ -233,6 +234,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  * Bridges functionality between libvlc and VLCMediaVideoTrack implementation.
  */
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 @interface VLCMediaVideoTrack (LibVLCBridging)
 
 - (nullable instancetype)initWithVideoTrack:(libvlc_video_track_t *)video;
@@ -247,6 +249,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable instancetype)initWithSubtitleTrack:(libvlc_subtitle_track_t *)subtitle;
 
 @end
+#endif
 
 /**
  * Bridges functionality between libvlc and VLCMediaMetaData implementation.
@@ -312,15 +315,6 @@ NS_ASSUME_NONNULL_BEGIN
 @interface VLCProgramDescription (LibVLCBridging)
 
 - (instancetype)initWithMediaPlayer:(VLCMediaPlayer *)mediaPlayer program:(libvlc_player_program_t *)program;
-
-@end
-
-/**
- * Bridges functionality between libvlc and VLCMediaSlave implementation.
- */
-@interface VLCMediaSlave (LibVLCBridging)
-
-+ (nullable instancetype)mediaSlaveWithLibVLCSlave:(const libvlc_media_slave_t *)slave;
 
 @end
 

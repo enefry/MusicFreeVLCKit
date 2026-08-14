@@ -32,12 +32,14 @@
 #import <VLCMediaPlayer.h>
 #import <VLCTime.h>
 #import <VLCMediaPlayer+Internal.h>
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #import <VLCAdjustFilter.h>
+#endif
 #import <VLCAudioEqualizer.h>
 #import <VLCEventsHandler.h>
 #import <VLCAudio.h>
 #import <VLCMediaPlayerTitleDescription.h>
-#if !TARGET_OS_IPHONE
+#if !defined(MUSICFREE_AUDIO_PROFILE) && !TARGET_OS_IPHONE
 # import <VLCVideoView.h>
 #endif // !TARGET_OS_IPHONE
 #ifdef HAVE_CONFIG_H
@@ -59,7 +61,9 @@ NSNotificationName const VLCMediaPlayerStateChangedNotification = @"VLCMediaPlay
 NSNotificationName const VLCMediaPlayerTitleSelectionChangedNotification = @"VLCMediaPlayerTitleSelectionChangedNotification";
 NSNotificationName const VLCMediaPlayerTitleListChangedNotification = @"VLCMediaPlayerTitleListChangedNotification";
 NSNotificationName const VLCMediaPlayerChapterChangedNotification = @"VLCMediaPlayerChapterChangedNotification";
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 NSNotificationName const VLCMediaPlayerSnapshotTakenNotification = @"VLCMediaPlayerSnapshotTakenNotification";
+#endif
 NSNotificationName const VLCMediaPlayerProgramListChangedNotification = @"VLCMediaPlayerProgramListChangedNotification";
 NSNotificationName const VLCMediaPlayerProgramSelectionChangedNotification = @"VLCMediaPlayerProgramSelectionChangedNotification";
 NSNotificationName const VLCMediaPlayerCapabilitiesChangedNotification = @"VLCMediaPlayerCapabilitiesChangedNotification";
@@ -132,10 +136,14 @@ static IOPMAssertionID displaySleepAssertion = 0;
     BOOL _isSeeking;
     dispatch_block_t _onSeekCompletion;
     VLCMediaPlayerState _cachedState;           ///< Cached state of the media being played
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     id _drawable;                               ///< The drawable associated to this media player
     NSMutableArray *_snapshots;                 ///< Array with snapshot file names
+#endif
     VLCAudio *_audio;                           ///< The audio controller
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     libvlc_video_viewpoint_t *_viewpoint;       ///< Current viewpoint of the media
+#endif
     dispatch_queue_t _libVLCBackgroundQueue;    ///< Background dispatch queue to call libvlc
     int64_t _minimalWatchTimePeriod;            ///< Minimal period for the watch timer
     VLCEventsHandler*       _eventsHandler;     ///< Handles libvlc event callbacks
@@ -274,10 +282,12 @@ static VLCMediaTrackType GetMediaTrackType(libvlc_track_type_t trackType)
     {
         case libvlc_track_audio:
             return VLCMediaTrackTypeAudio;
+#if !defined(MUSICFREE_AUDIO_PROFILE)
         case libvlc_track_text:
             return VLCMediaTrackTypeText;
         case libvlc_track_video:
             return VLCMediaTrackTypeVideo;
+#endif
         default:
             return VLCMediaTrackTypeUnknown;
     }
@@ -535,6 +545,7 @@ static void HandleMediaPlayerLengthChanged(void *opaque, libvlc_time_t length)
     }
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 static void HandleMediaPlayerSnapshot(void *opaque, const char *psz_filepath)
 {
     @autoreleasepool {
@@ -612,6 +623,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
         }];
     }
 }
+#endif
 
 @implementation VLCMediaPlayer
 @synthesize libraryInstance = _privateLibrary;
@@ -644,7 +656,9 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 - (instancetype)initCommon
 {
     if (self = [super init]) {
+#if !defined(MUSICFREE_AUDIO_PROFILE)
         _adjustFilter = [VLCAdjustFilter createWithVLCMediaPlayer:self];
+#endif
         _timeChangeLockQueue = dispatch_queue_create("org.videolan.vlcmediaplayer.timechangelock", DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL);
         _lastTimePoint.ts_us = -1;
         _timeChangeUpdateInterval = 1.0;
@@ -677,11 +691,15 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
             .on_chapter_selection_changed = HandleMediaChapterChanged,
             .on_program_list_changed = HandleMediaProgramListChanged,
             .on_program_selection_changed = HandleMediaProgramSelectionChanged,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_screenshot_taken = HandleMediaPlayerSnapshot,
             .on_recording_changed = HandleMediaPlayerRecord,
+#endif
             .on_audio_volume_changed = HandleMediaPlayerAudioVolumeChanged,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
+#endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
                                                   &player_cbs, (__bridge void *)_eventsHandler);
@@ -766,15 +784,19 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     // TODO: Should we tell the delegate that we're shutting down?
     _delegate = nil;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     // Clear our drawable as we are going to release it, we don't
     // want the core to use it from this point.
     libvlc_media_player_set_nsobject(_playerInstance, nil);
     _drawable = nil;
+#endif
 
     libvlc_media_player_set_equalizer(_playerInstance, NULL);
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     if (_viewpoint)
         libvlc_free(_viewpoint);
+#endif
 
     libvlc_media_player_release(_playerInstance);
 }
@@ -791,6 +813,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 }
 #endif
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)setDrawable:(id)aDrawable
 {
     // Make sure that this instance has been associated with the drawing canvas.
@@ -807,6 +830,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     return (__bridge id)(libvlc_media_player_get_nsobject(_playerInstance));
 }
+#endif
 
 - (VLCAudio *)audio
 {
@@ -817,6 +841,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 
 
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #pragma mark -
 #pragma mark Subtitles
 
@@ -928,7 +953,9 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     libvlc_video_set_deinterlace(_playerInstance, (int)deinterlace, [name UTF8String]);
 }
+#endif
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #pragma mark - Adjust Video Filter
 
 - (BOOL)isAdjustFilterEnabled
@@ -984,6 +1011,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     _adjustFilter.gamma.value = @(f_value);
 }
+#endif
 
 #pragma mark -
 
@@ -997,6 +1025,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     return libvlc_media_player_get_rate(_playerInstance);
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (CGSize)videoSize
 {
     unsigned height = 0, width = 0;
@@ -1010,6 +1039,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     return libvlc_media_player_has_vout(_playerInstance);
 }
+#endif
 
 - (void)setTime:(VLCTime *)value
 {
@@ -1287,6 +1317,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     return [VLCTime timeWithNumber:@(b_time / 1000)];
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (VLCVideoFitMode)videoFitMode
 {
     return (VLCVideoFitMode)libvlc_video_get_display_fit(_playerInstance);
@@ -1296,6 +1327,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     libvlc_video_set_display_fit(_playerInstance, (libvlc_video_fit_mode_t)videoFitMode);
 }
+#endif
 
 - (int)numberOfChaptersForTitle:(int)titleIndex
 {
@@ -1488,6 +1520,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     libvlc_media_player_stop_async(_playerInstance);
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (libvlc_video_viewpoint_t *)viewPoint
 {
     if (_viewpoint == NULL) {
@@ -1540,7 +1573,9 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     }
     return 0;
 }
+#endif
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)gotoNextFrame
 {
     libvlc_media_player_next_frame(_playerInstance);
@@ -1550,6 +1585,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     libvlc_media_player_previous_frame(_playerInstance);
 }
+#endif
 
 - (void)fastForward
 {
@@ -1637,10 +1673,12 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     [self jumpForward:300];
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)performNavigationAction:(VLCMediaPlaybackNavigationAction)action
 {
     libvlc_media_player_navigate(_playerInstance, action);
 }
+#endif
 
 + (NSSet *)keyPathsForValuesAffectingIsPlaying
 {
@@ -1726,6 +1764,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     [self didChangeValueForKey:@"seekable"];
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (nullable NSArray *)snapshots
 {
     if (!_snapshots)
@@ -1761,6 +1800,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     }
 }
 #endif
+#endif
 
 - (void *)libVLCMediaPlayer
 {
@@ -1772,6 +1812,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     return _eventsHandler;
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)startRecordingAtPath:(NSString *)path
 {
     libvlc_media_player_record(_playerInstance, YES, [path UTF8String]);
@@ -1791,6 +1832,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     return libvlc_media_player_set_renderer(_playerInstance, item.libVLCRendererItem) == 0;
 }
 #endif // !TARGET_OS_TV
+#endif
 @end
 
 @implementation VLCMediaPlayer (Private)
@@ -1829,11 +1871,15 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
             .on_chapter_selection_changed = HandleMediaChapterChanged,
             .on_program_list_changed = HandleMediaProgramListChanged,
             .on_program_selection_changed = HandleMediaProgramSelectionChanged,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_screenshot_taken = HandleMediaPlayerSnapshot,
             .on_recording_changed = HandleMediaPlayerRecord,
+#endif
             .on_audio_volume_changed = HandleMediaPlayerAudioVolumeChanged,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
+#endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
                                                   &cbs, (__bridge void *)_eventsHandler);
@@ -1852,7 +1898,11 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
         libvlc_media_player_watch_time(_playerInstance, _minimalWatchTimePeriod,
                                        &watch_time_cbs, (__bridge void *)_eventsHandler);
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
         [self setDrawable:aDrawable];
+#else
+        (void)aDrawable;
+#endif
     }
     return self;
 }
@@ -1944,6 +1994,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     [self didChangeValueForKey:@"currentChapterIndex"];
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)mediaPlayerSnapshot:(NSString *)fileName
 {
     @synchronized(_snapshots) {
@@ -1954,6 +2005,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
         [_snapshots addObject:fileName];
     }
 }
+#endif
 
 @end
 
@@ -1971,6 +2023,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     return [self _tracksForType: libvlc_track_audio];
 }
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 #pragma mark - Video Tracks
 
 - (NSArray<VLCMediaPlayerTrack *> *)videoTracks
@@ -2043,6 +2096,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 {
     libvlc_media_player_unselect_track_type(_playerInstance, libvlc_track_text);
 }
+#endif
 
 #pragma mark - Private
 

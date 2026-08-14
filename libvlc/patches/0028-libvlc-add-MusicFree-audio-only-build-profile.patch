@@ -1,0 +1,3392 @@
+From 3c7cef710cd6ab05bbbece946f5d84f170082d2c Mon Sep 17 00:00:00 2001
+From: chenrenwei <chenrenwei@yy.com>
+Date: Fri, 14 Aug 2026 05:03:15 -0400
+Subject: [PATCH 28/28] libvlc: add MusicFree audio-only build profile
+
+---
+ configure.ac                                  |   1 +
+ contrib/src/ebml/rules.mak                    |   4 +-
+ contrib/src/ffmpeg/musicfree-audio-only.patch | 225 +++++
+ contrib/src/ffmpeg/rules.mak                  |  58 +-
+ contrib/src/taglib/rules.mak                  |  19 +-
+ contrib/src/utfcpp/SHA512SUMS                 |   1 +
+ contrib/src/utfcpp/rules.mak                  |  22 +
+ extras/package/apple/build.sh                 |  32 +-
+ include/vlc/libvlc_media_track.h              |  10 +-
+ lib/Makefile.am                               |  28 +-
+ lib/media.c                                   |   4 +
+ lib/media_internal.h                          |   4 +
+ lib/media_player.c                            |  57 +-
+ lib/media_player_internal.h                   |   7 +
+ lib/media_track.c                             |   7 +-
+ lib/parser.c                                  | 141 +---
+ lib/picture.c                                 |  19 +-
+ lib/picture_internal.h                        |   2 +
+ modules/access/file.c                         |  21 +-
+ modules/access/fs.c                           |  14 -
+ modules/access/fs.h                           |   6 -
+ modules/codec/Makefile.am                     |  16 +-
+ modules/codec/avcodec/avcodec.c               |  50 +-
+ modules/codec/avcodec/avcodec.h               |   5 +-
+ modules/codec/avcodec/fourcc.c                |  26 +-
+ modules/demux/Makefile.am                     |   1 -
+ modules/demux/avformat/demux.c                |  55 +-
+ modules/demux/mp4/mp4.c                       |  19 -
+ src/Makefile.am                               | 104 ++-
+ src/misc/es_format.c                          |  15 +-
+ src/misc/fourcc.c                             |  22 +-
+ src/misc/fourcc_gen.c                         |   4 +
+ src/musicfree_audio_compat.c                  | 797 ++++++++++++++++++
+ 33 files changed, 1474 insertions(+), 322 deletions(-)
+ create mode 100644 contrib/src/ffmpeg/musicfree-audio-only.patch
+ create mode 100644 contrib/src/utfcpp/SHA512SUMS
+ create mode 100644 contrib/src/utfcpp/rules.mak
+ create mode 100644 src/musicfree_audio_compat.c
+
+diff --git a/configure.ac b/configure.ac
+index 29b2ab4b03..8d19310c7a 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -566,6 +566,7 @@ AM_CONDITIONAL([HAVE_TVOS],    [test "${HAVE_TVOS}" = "1"])
+ AM_CONDITIONAL([HAVE_IOS_OR_TVOS], [test "${HAVE_IOS_OR_TVOS}" = "1"])
+ AM_CONDITIONAL([HAVE_XROS],    [test "${HAVE_XROS}" = "1"])
+ AM_CONDITIONAL([HAVE_WATCHOS],    [test "${HAVE_WATCHOS}" = "1"])
++AM_CONDITIONAL([MUSICFREE_AUDIO_PROFILE], [test "x${MUSICFREE_AUDIO_PROFILE}" = "x1"])
+ 
+ AM_CONDITIONAL([HAVE_LIBANL],  [test "${HAVE_LIBANL}" = "1"])
+ 
+diff --git a/contrib/src/ebml/rules.mak b/contrib/src/ebml/rules.mak
+index e96b2507c7..1009508bae 100644
+--- a/contrib/src/ebml/rules.mak
++++ b/contrib/src/ebml/rules.mak
+@@ -7,6 +7,8 @@ ifeq ($(call need_pkg,"libebml >= 1.3.8"),)
+ PKGS_FOUND += ebml
+ endif
+ 
++DEPS_ebml = utfcpp $(DEPS_utfcpp)
++
+ $(TARBALLS)/libebml-$(EBML_VERSION).tar.xz:
+ 	$(call download_pkg,$(EBML_URL),ebml)
+ 
+@@ -16,7 +18,7 @@ ebml: libebml-$(EBML_VERSION).tar.xz .sum-ebml
+ 	$(UNPACK)
+ 	$(MOVE)
+ 
+-.ebml: ebml toolchain.cmake
++.ebml: ebml .utfcpp toolchain.cmake
+ 	$(CMAKECLEAN)
+ 	$(HOSTVARS_CMAKE) $(CMAKE)
+ 	+$(CMAKEBUILD)
+diff --git a/contrib/src/ffmpeg/musicfree-audio-only.patch b/contrib/src/ffmpeg/musicfree-audio-only.patch
+new file mode 100644
+index 0000000000..1090507081
+--- /dev/null
++++ b/contrib/src/ffmpeg/musicfree-audio-only.patch
+@@ -0,0 +1,225 @@
++--- a/libavcodec/codec_desc.c
+++++ b/libavcodec/codec_desc.c
++@@ -32,6 +32,7 @@
++ #define MT(...) (const char *const[]){ __VA_ARGS__, NULL }
++ 
++ static const AVCodecDescriptor codec_descriptors[] = {
+++#ifndef MUSICFREE_AUDIO_PROFILE
++     /* video codecs */
++     {
++         .id        = AV_CODEC_ID_MPEG1VIDEO,
++@@ -2797,6 +2798,7 @@
++         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
++     },
++ 
+++#endif
++     /* audio codecs */
++     {
++         .id        = AV_CODEC_ID_MP2,
++@@ -3568,6 +3570,7 @@
++         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
++     },
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++     /* subtitle codecs */
++     {
++         .id        = AV_CODEC_ID_DVD_SUBTITLE,
++@@ -3869,6 +3872,7 @@
++         .name      = "vnull",
++         .long_name = NULL_IF_CONFIG_SMALL("Null video codec"),
++     },
+++#endif
++     {
++         .id        = AV_CODEC_ID_ANULL,
++         .type      = AVMEDIA_TYPE_AUDIO,
++--- a/libavformat/rawdec.c
+++++ b/libavformat/rawdec.c
++@@ -65,6 +65,8 @@
++     return 0;
++ }
++ 
+++#define DEC AV_OPT_FLAG_DECODING_PARAM
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ /* MPEG-1/H.263 input */
++ int ff_raw_video_read_header(AVFormatContext *s)
++ {
++@@ -92,6 +94,8 @@
++     return ret;
++ }
++ 
+++#endif
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ int ff_raw_subtitle_read_header(AVFormatContext *s)
++ {
++     AVStream *st = avformat_new_stream(s, NULL);
++@@ -102,6 +106,7 @@
++     st->start_time = 0;
++     return 0;
++ }
+++#endif
++ 
++ static int raw_data_read_header(AVFormatContext *s)
++ {
++@@ -114,10 +119,10 @@
++     return 0;
++ }
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ /* Note: Do not forget to add new entries to the Makefile as well. */
++ 
++ #define OFFSET(x) offsetof(FFRawVideoDemuxerContext, x)
++-#define DEC AV_OPT_FLAG_DECODING_PARAM
++ static const AVOption rawvideo_options[] = {
++     { "framerate", "", OFFSET(framerate), AV_OPT_TYPE_VIDEO_RATE, {.str = "25"}, 0, INT_MAX, DEC},
++     { "raw_packet_size", "", OFFSET(raw_packet_size), AV_OPT_TYPE_INT, {.i64 = RAW_PACKET_SIZE }, 1, INT_MAX, DEC},
++@@ -132,6 +137,7 @@
++     .version    = LIBAVUTIL_VERSION_INT,
++ };
++ 
+++#endif
++ #define OFFSET(x) offsetof(FFRawDemuxerContext, x)
++ static const AVOption raw_options[] = {
++     { "raw_packet_size", "", OFFSET(raw_packet_size), AV_OPT_TYPE_INT, {.i64 = RAW_PACKET_SIZE }, 1, INT_MAX, DEC},
++--- a/libavformat/oggdec.h
+++++ b/libavformat/oggdec.h
++@@ -127,9 +127,11 @@
++ extern const struct ogg_codec ff_dirac_codec;
++ extern const struct ogg_codec ff_flac_codec;
++ extern const struct ogg_codec ff_ogm_audio_codec;
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ extern const struct ogg_codec ff_ogm_old_codec;
++ extern const struct ogg_codec ff_ogm_text_codec;
++ extern const struct ogg_codec ff_ogm_video_codec;
+++#endif
++ extern const struct ogg_codec ff_old_dirac_codec;
++ extern const struct ogg_codec ff_old_flac_codec;
++ extern const struct ogg_codec ff_opus_codec;
++--- a/libavformat/oggdec.c
+++++ b/libavformat/oggdec.c
++@@ -53,10 +53,14 @@
++     &ff_vp8_codec,
++     &ff_old_dirac_codec,
++     &ff_old_flac_codec,
+++#ifndef MUSICFREE_AUDIO_PROFILE
++     &ff_ogm_video_codec,
+++#endif
++     &ff_ogm_audio_codec,
+++#ifndef MUSICFREE_AUDIO_PROFILE
++     &ff_ogm_text_codec,
++     &ff_ogm_old_codec,
+++#endif
++     NULL
++ };
++ 
++@@ -930,11 +934,13 @@
++            && !ogg_packet(s, &i, &pstart, &psize, pos_arg)) {
++         if (i == stream_index) {
++             struct ogg_stream *os = ogg->streams + stream_index;
+++#ifndef MUSICFREE_AUDIO_PROFILE
++             // Do not trust the last timestamps of an ogm video
++             if (    (os->flags & OGG_FLAG_EOS)
++                 && !(os->flags & OGG_FLAG_BOS)
++                 && os->codec == &ff_ogm_video_codec)
++                 continue;
+++#endif
++             pts = ogg_calc_pts(s, i, NULL);
++             ogg_validate_keyframe(s, i, pstart, psize);
++             if (os->pflags & AV_PKT_FLAG_KEY) {
++--- a/libavformat/oggparseogm.c
+++++ b/libavformat/oggparseogm.c
++@@ -53,6 +53,7 @@
++     if (bytestream2_peek_byte(&p) == 1) {
++         bytestream2_skip(&p, 1);
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++         if (bytestream2_peek_byte(&p) == 'v'){
++             int tag;
++             st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
++@@ -67,6 +68,7 @@
++             st->codecpar->codec_id = AV_CODEC_ID_TEXT;
++             bytestream2_skip(&p, 12);
++         } else {
+++#endif
++             uint8_t acid[5] = { 0 };
++             int cid;
++             st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++@@ -78,7 +80,9 @@
++             // our parser completely breaks AAC in Ogg
++             if (st->codecpar->codec_id != AV_CODEC_ID_AAC)
++                 sti->need_parsing = AVSTREAM_PARSE_FULL;
+++#ifndef MUSICFREE_AUDIO_PROFILE
++         }
+++#endif
++ 
++         size        = bytestream2_get_le32(&p);
++         size        = FFMIN(size, os->psize);
++@@ -92,11 +96,13 @@
++         bytestream2_skip(&p, 4);    /* default_len */
++         bytestream2_skip(&p, 8);    /* buffersize + bits_per_sample */
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++         if(st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO){
++             st->codecpar->width = bytestream2_get_le32(&p);
++             st->codecpar->height = bytestream2_get_le32(&p);
++             avpriv_set_pts_info(st, 64, time_unit, spu * 10000000);
++         } else {
+++#endif
++             st->codecpar->ch_layout.nb_channels = bytestream2_get_le16(&p);
++             bytestream2_skip(&p, 2); /* block_align */
++             st->codecpar->bit_rate = bytestream2_get_le32(&p) * 8;
++@@ -114,7 +120,9 @@
++                     return ret;
++                 bytestream2_get_buffer(&p, st->codecpar->extradata, st->codecpar->extradata_size);
++             }
+++#ifndef MUSICFREE_AUDIO_PROFILE
++         }
+++#endif
++ 
++         // Update internal avctx with changes to codecpar above.
++         sti->need_context_update = 1;
++@@ -127,6 +135,7 @@
++     return 1;
++ }
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ static int
++ ogm_dshow_header(AVFormatContext *s, int idx)
++ {
++@@ -167,6 +176,7 @@
++ 
++     return 1;
++ }
+++#endif
++ 
++ static int
++ ogm_packet(AVFormatContext *s, int idx)
++@@ -192,6 +202,7 @@
++     return 0;
++ }
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ const struct ogg_codec ff_ogm_video_codec = {
++     .magic = "\001video",
++     .magicsize = 6,
++@@ -200,6 +211,7 @@
++     .granule_is_start = 1,
++     .nb_header = 2,
++ };
+++#endif
++ 
++ const struct ogg_codec ff_ogm_audio_codec = {
++     .magic = "\001audio",
++@@ -210,6 +222,7 @@
++     .nb_header = 2,
++ };
++ 
+++#ifndef MUSICFREE_AUDIO_PROFILE
++ const struct ogg_codec ff_ogm_text_codec = {
++     .magic = "\001text",
++     .magicsize = 5,
++@@ -227,3 +240,4 @@
++     .granule_is_start = 1,
++     .nb_header = 1,
++ };
+++#endif
++
+diff --git a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
+index eda36c50f3..ce5e2b7e53 100644
+--- a/contrib/src/ffmpeg/rules.mak
++++ b/contrib/src/ffmpeg/rules.mak
+@@ -19,10 +19,6 @@ FFMPEGCONF = --prefix="$(PREFIX)" --enable-static --disable-shared \
+ 	--host-cc="$(BUILDCC)" \
+ 	--pkg-config="$(PKG_CONFIG)" \
+ 	--disable-doc \
+-	--disable-encoder=vorbis \
+-	--disable-decoder=opus \
+-	--enable-libgsm \
+-	--enable-libopenjpeg \
+ 	--disable-debug \
+ 	--disable-avdevice \
+ 	--disable-devices \
+@@ -32,12 +28,46 @@ FFMPEGCONF = --prefix="$(PREFIX)" --enable-static --disable-shared \
+ 	--disable-bsfs \
+ 	--disable-bzlib \
+ 	--disable-libvpx \
+-	--enable-bsf=vp9_superframe \
+-	--disable-swresample \
+ 	--disable-iconv \
+ 	--disable-avisynth \
+ 	--disable-nvenc \
+ 	--disable-linux-perf
++
++ifndef MUSICFREE_AUDIO_PROFILE
++FFMPEGCONF += \
++	--disable-encoder=vorbis \
++	--disable-decoder=opus \
++	--enable-libgsm \
++	--enable-libopenjpeg \
++	--enable-bsf=vp9_superframe \
++	--disable-swresample
++DEPS_ffmpeg = zlib $(DEPS_zlib) gsm $(DEPS_gsm) openjpeg $(DEPS_openjpeg)
++else
++# The MusicFree profile uses FFmpeg only for the audio codecs and containers
++# that VLC does not provide as a smaller native module. VLC owns all network
++# access, so FFmpeg must not retain its own network or media-processing graph.
++FFMPEGCONF += \
++	--disable-everything \
++	--disable-avdevice \
++	--disable-devices \
++	--disable-avfilter \
++	--disable-filters \
++	--disable-encoders \
++	--disable-muxers \
++	--disable-bsfs \
++	--disable-network \
++	--disable-programs \
++	--disable-videotoolbox \
++	--enable-small \
++	--disable-swscale \
++	--extra-cflags=-DMUSICFREE_AUDIO_PROFILE \
++	--enable-protocol=file \
++	--enable-decoder='aac,aac_fixed,aac_latm,alac,ape,flac,mp3,mpc7,mpc8,opus,pcm_*,vorbis,wavpack' \
++	--enable-parser='aac,aac_latm,ac3,ape,flac,mpegaudio,opus,vorbis' \
++	--enable-demuxer='aac,adts,aiff,ape,caf,flac,matroska,mov,mp3,mpc,mpc8,ogg,pcm,wav,wv' \
++	--enable-swresample
++DEPS_ffmpeg = zlib $(DEPS_zlib)
++endif
+ ifdef HAVE_DARWIN_OS
+ FFMPEGCONF += \
+ 	--disable-securetransport
+@@ -49,6 +79,12 @@ FFMPEGCONF += \
+ endif
+ endif
+ 
++ifdef MUSICFREE_AUDIO_PROFILE
++# Keep this define after the Darwin flags because FFmpeg's configure accepts
++# repeated --extra-cflags options and the later one wins.
++FFMPEGCONF += --extra-cflags="$(CFLAGS) -DMUSICFREE_AUDIO_PROFILE" --disable-videotoolbox
++endif
++
+ ifdef ENABLE_PDB
+ FFMPEGCONF += --ln_s=false
+ endif
+@@ -56,18 +92,21 @@ ifdef ENABLE_LTO
+ FFMPEGCONF += --enable-lto
+ endif
+ 
+-DEPS_ffmpeg = zlib $(DEPS_zlib) gsm $(DEPS_gsm) openjpeg $(DEPS_openjpeg)
+-
+ # Optional dependencies
+-ifndef BUILD_NETWORK
++ifndef MUSICFREE_AUDIO_PROFILE
++ifdef BUILD_NETWORK
++else
+ FFMPEGCONF += --disable-network
+ endif
++endif
++ifndef MUSICFREE_AUDIO_PROFILE
+ ifdef BUILD_ENCODERS
+ FFMPEGCONF += --enable-libmp3lame
+ DEPS_ffmpeg += lame $(DEPS_lame)
+ else
+ FFMPEGCONF += --disable-encoders --disable-muxers
+ endif
++endif
+ 
+ ifneq ($(findstring amf,$(PKGS)),)
+ DEPS_ffmpeg += amf $(DEPS_amf)
+@@ -251,6 +290,7 @@ ffmpeg: ffmpeg-$(FFMPEG_VERSION).tar.xz .sum-ffmpeg
+ 	$(APPLY) $(SRC)/ffmpeg/0011-avcodec-videotoolboxenc-disable-calls-on-unsupported.patch
+ 	$(APPLY) $(SRC)/ffmpeg/avcodec-fix-compilation-visionos.patch
+ 	$(APPLY) $(SRC)/ffmpeg/avcodec-enable-audiotoolbox-ac3.patch
++	$(APPLY) $(SRC)/ffmpeg/musicfree-audio-only.patch
+ 	$(MOVE)
+ 
+ .ffmpeg: ffmpeg
+diff --git a/contrib/src/taglib/rules.mak b/contrib/src/taglib/rules.mak
+index 799334745c..0839ee4554 100644
+--- a/contrib/src/taglib/rules.mak
++++ b/contrib/src/taglib/rules.mak
+@@ -2,9 +2,7 @@
+ 
+ TAGLIB_VERSION := 2.3
+ TAGLIB_URL := $(GITHUB)/taglib/taglib/releases/download/v$(TAGLIB_VERSION)/taglib-$(TAGLIB_VERSION).tar.gz
+-
+ UTFCPP_VERSION := 3.2.5
+-UTFCPP_URL := $(GITHUB)/nemtrif/utfcpp/archive/refs/tags/v$(UTFCPP_VERSION).tar.gz
+ 
+ PKGS += taglib
+ ifeq ($(call need_pkg,"taglib >= 1.9"),)
+@@ -14,21 +12,18 @@ endif
+ $(TARBALLS)/taglib-$(TAGLIB_VERSION).tar.gz:
+ 	$(call download_pkg,$(TAGLIB_URL),taglib)
+ 
+-$(TARBALLS)/utfcpp-$(UTFCPP_VERSION).tar.gz:
+-	$(call download_pkg,$(UTFCPP_URL),utfcpp)
+-
+-.sum-taglib: taglib-$(TAGLIB_VERSION).tar.gz utfcpp-$(UTFCPP_VERSION).tar.gz
+-
+-.sum-utfcpp: .sum-taglib
+-	touch $@
++.sum-taglib: taglib-$(TAGLIB_VERSION).tar.gz
+ 
+ taglib: taglib-$(TAGLIB_VERSION).tar.gz .sum-taglib
+ 	$(UNPACK)
+ 	$(MOVE)
+ 
+-taglib/3rdparty/utfcpp: utfcpp-$(UTFCPP_VERSION).tar.gz .sum-utfcpp taglib
+-	$(UNPACK)
+-	$(MOVE)
++taglib/3rdparty/utfcpp: utfcpp taglib
++	$(RM) -R $@
++	cp -R utfcpp $@
++	touch $@
++
++DEPS_taglib = utfcpp $(DEPS_utfcpp)
+ 
+ TAGLIB_CONF := -DBUILD_BINDINGS=OFF
+ ifdef HAVE_WINSTORE
+diff --git a/contrib/src/utfcpp/SHA512SUMS b/contrib/src/utfcpp/SHA512SUMS
+new file mode 100644
+index 0000000000..8ec542849e
+--- /dev/null
++++ b/contrib/src/utfcpp/SHA512SUMS
+@@ -0,0 +1 @@
++1ce12c8158a2f3bcddec104ceacedaea4031b4c88fc0fa1f1fae8dfa8df81c846861df9d01e8f294d79b9e4ab8c51bd1289f404eed24d07abc760688fee13090  utfcpp-3.2.5.tar.gz
+diff --git a/contrib/src/utfcpp/rules.mak b/contrib/src/utfcpp/rules.mak
+new file mode 100644
+index 0000000000..397ea35843
+--- /dev/null
++++ b/contrib/src/utfcpp/rules.mak
+@@ -0,0 +1,22 @@
++# UTF8-CPP
++
++UTFCPP_VERSION := 3.2.5
++UTFCPP_URL := $(GITHUB)/nemtrif/utfcpp/archive/refs/tags/v$(UTFCPP_VERSION).tar.gz
++
++PKGS += utfcpp
++
++$(TARBALLS)/utfcpp-$(UTFCPP_VERSION).tar.gz:
++	$(call download_pkg,$(UTFCPP_URL),utfcpp)
++
++.sum-utfcpp: utfcpp-$(UTFCPP_VERSION).tar.gz
++
++utfcpp: utfcpp-$(UTFCPP_VERSION).tar.gz .sum-utfcpp
++	$(UNPACK)
++	$(MOVE)
++
++.utfcpp: utfcpp toolchain.cmake
++	$(CMAKECLEAN)
++	$(HOSTVARS_CMAKE) $(CMAKE) -DUTF8_TESTS=OFF -DUTF8_SAMPLES=OFF -DUTF8_INSTALL=ON
++	+$(CMAKEBUILD)
++	$(CMAKEINSTALL)
++	touch $@
+diff --git a/extras/package/apple/build.sh b/extras/package/apple/build.sh
+index 90e5893396..6da63605ff 100755
+--- a/extras/package/apple/build.sh
++++ b/extras/package/apple/build.sh
+@@ -373,14 +373,14 @@ validate_sdk_name()
+ set_host_envvars()
+ {
+     # Flags to be used for C-like compilers (C, C++, Obj-C)
+-    local clike_flags="$VLC_DEPLOYMENT_TARGET_CFLAG -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH $1"
++    local clike_flags="$VLC_DEPLOYMENT_TARGET_CFLAG -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH ${VLC_AUDIO_PROFILE_CFLAGS:-} $1"
+     local bitcode_flag=""
+     if [ "$VLC_USE_BITCODE" -gt "0" ]; then
+         clike_flags+=" $VLC_BITCODE_FLAG"
+         bitcode_flag=" $VLC_BITCODE_FLAG"
+     fi
+ 
+-    export CPPFLAGS="-arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH"
++    export CPPFLAGS="-arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH ${VLC_AUDIO_PROFILE_CFLAGS:-}"
+ 
+     export CFLAGS="$clike_flags"
+     export CXXFLAGS="$clike_flags"
+@@ -422,16 +422,16 @@ ac_var_to_export_ac_var()
+ write_config_mak()
+ {
+     # Flags to be used for C-like compilers (C, C++, Obj-C)
+-    local clike_flags="\$(VLC_DEPLOYMENT_TARGET_CFLAG) -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH $1"
++    local clike_flags="\$(VLC_DEPLOYMENT_TARGET_CFLAG) -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH ${VLC_AUDIO_PROFILE_CFLAGS:-} $1"
+ 
+-    local vlc_cppflags="-arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH"
++    local vlc_cppflags="-arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH ${VLC_AUDIO_PROFILE_CFLAGS:-}"
+     local vlc_cflags="$clike_flags"
+     local vlc_cxxflags="$clike_flags"
+     local vlc_objcflags="$clike_flags"
+     local vlc_objcxxflags="$clike_flags"
+ 
+     # Vanilla clang doesn't use VLC_DEPLOYMENT_TAGET_LDFLAGS but only the CFLAGS variant
+-    local vlc_ldflags="\$(VLC_DEPLOYMENT_TARGET_LDFLAG) \$(VLC_DEPLOYMENT_TARGET_CFLAG) -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH"
++    local vlc_ldflags="\$(VLC_DEPLOYMENT_TARGET_LDFLAG) \$(VLC_DEPLOYMENT_TARGET_CFLAG) -arch $VLC_HOST_ARCH -isysroot $VLC_APPLE_SDK_PATH ${VLC_AUDIO_PROFILE_CFLAGS:-}"
+ 
+     echo "Creating makefile..."
+     test -e config.mak && unlink config.mak
+@@ -804,8 +804,17 @@ fi
+ 
+ # Bootstrap VLC
+ cd "$VLC_SRC_DIR" || abort_err "Failed cd to VLC source dir"
+-if ! [ -e configure ]; then
+-    echo "Bootstraping vlc"
++# Automake embeds the included modules/*.am files into modules/Makefile.in.
++# Checking configure.ac alone leaves a stale module graph after a profile
++# changes a Makefile.am, which can silently reintroduce video sources.
++needs_bootstrap=0
++if [ ! -e configure ]; then
++    needs_bootstrap=1
++elif find configure.ac modules -type f -name 'Makefile.am' -newer configure -print -quit | grep -q .; then
++    needs_bootstrap=1
++fi
++if [ "$needs_bootstrap" -eq 1 ]; then
++    echo "Bootstrapping vlc"
+     ./bootstrap
+ fi
+ 
+@@ -871,12 +880,17 @@ elif [ "$VLC_HOST_OS" = "watchos" ]; then
+     VLC_MODULE_REMOVAL_LIST+=( "${VLC_MODULE_REMOVAL_LIST_WATCHOS[@]}" )
+ fi
+ 
++REMOVED_MODULE_COUNT=0
+ for module in "${VLC_MODULE_REMOVAL_LIST[@]}"; do
+-    find "$VLC_INSTALL_DIR/lib/vlc/plugins" \
++    while IFS= read -r -d '' plugin_path; do
++        rm -f "$plugin_path"
++        REMOVED_MODULE_COUNT=$((REMOVED_MODULE_COUNT + 1))
++    done < <(find "$VLC_INSTALL_DIR/lib/vlc/plugins" \
+         -name "lib${module}_plugin.a" \
+         -type f \
+-        -exec rm '{}' \;
++        -print0)
+ done
++echo "Removed ${REMOVED_MODULE_COUNT} plugin archives"
+ 
+ echo ""
+ 
+diff --git a/include/vlc/libvlc_media_track.h b/include/vlc/libvlc_media_track.h
+index 7b33dd465d..899ba5b2cb 100644
+--- a/include/vlc/libvlc_media_track.h
++++ b/include/vlc/libvlc_media_track.h
+@@ -25,7 +25,9 @@
+ #ifndef VLC_LIBVLC_MEDIA_TRACK_H
+ #define VLC_LIBVLC_MEDIA_TRACK_H 1
+ 
+-# include "libvlc_video.h"
++# if !defined(MUSICFREE_AUDIO_PROFILE)
++#  include "libvlc_video.h"
++# endif
+ 
+ # ifdef __cplusplus
+ extern "C" {
+@@ -45,8 +47,10 @@ typedef enum libvlc_track_type_t
+ {
+     libvlc_track_unknown   = -1,
+     libvlc_track_audio     = 0,
++# if !defined(MUSICFREE_AUDIO_PROFILE)
+     libvlc_track_video     = 1,
+     libvlc_track_text      = 2
++# endif
+ } libvlc_track_type_t;
+ 
+ typedef struct libvlc_audio_track_t
+@@ -55,6 +59,7 @@ typedef struct libvlc_audio_track_t
+     unsigned    i_rate;
+ } libvlc_audio_track_t;
+ 
++# if !defined(MUSICFREE_AUDIO_PROFILE)
+ /**
+  * Viewpoint
+  *
+@@ -87,6 +92,7 @@ typedef struct libvlc_subtitle_track_t
+ {
+     char *psz_encoding;
+ } libvlc_subtitle_track_t;
++# endif
+ 
+ typedef struct libvlc_media_track_t
+ {
+@@ -102,8 +108,10 @@ typedef struct libvlc_media_track_t
+ 
+     union libvlc_media_track_data {
+         libvlc_audio_track_t *audio;
++# if !defined(MUSICFREE_AUDIO_PROFILE)
+         libvlc_video_track_t *video;
+         libvlc_subtitle_track_t *subtitle;
++# endif
+     } u;
+ 
+     unsigned int i_bitrate;
+diff --git a/lib/Makefile.am b/lib/Makefile.am
+index cda74c8037..37a0900653 100644
+--- a/lib/Makefile.am
++++ b/lib/Makefile.am
+@@ -10,18 +10,13 @@ CLEANFILES = $(BUILT_SOURCES) $(pkgconfig_DATA)
+ pkginclude_HEADERS = \
+ 	../include/vlc/libvlc.h \
+ 	../include/vlc/libvlc_dialog.h \
+-	../include/vlc/libvlc_downloader.h \
+ 	../include/vlc/libvlc_media.h \
+-	../include/vlc/libvlc_media_discoverer.h \
+ 	../include/vlc/libvlc_media_list.h \
+-	../include/vlc/libvlc_media_list_player.h \
+ 	../include/vlc/libvlc_media_player.h \
+ 	../include/vlc/libvlc_media_track.h \
+ 	../include/vlc/libvlc_parser.h \
+-	../include/vlc/libvlc_renderer_discoverer.h \
+ 	../include/vlc/libvlc_picture.h \
+ 	../include/vlc/libvlc_version.h \
+-	../include/vlc/libvlc_video.h \
+ 	../include/vlc/vlc.h
+ 
+ lib_LTLIBRARIES = libvlc.la
+@@ -32,27 +27,38 @@ libvlc_la_SOURCES = \
+ 	media_list_internal.h \
+ 	media_player_internal.h \
+ 	picture_internal.h \
+-	renderer_discoverer_internal.h \
+ 	core.c \
+ 	dialog.c \
+-	downloader.c \
+-	renderer_discoverer.c \
+ 	error.c \
+ 	log.c \
+-	video.c \
+ 	audio.c \
+ 	media.c \
+ 	media_track.c \
+ 	media_player.c \
+ 	media_list.c \
+ 	media_list_path.h \
+-	media_list_player.c \
+-	media_discoverer.c \
+ 	parser.c \
+ 	picture.c \
+ 	libvlc.pc.in \
+ 	libvlc.sym \
+ 	../src/revision.c
++
++if !MUSICFREE_AUDIO_PROFILE
++pkginclude_HEADERS += \
++	../include/vlc/libvlc_downloader.h \
++	../include/vlc/libvlc_media_discoverer.h \
++	../include/vlc/libvlc_media_list_player.h \
++	../include/vlc/libvlc_renderer_discoverer.h \
++	../include/vlc/libvlc_video.h
++
++libvlc_la_SOURCES += \
++	renderer_discoverer_internal.h \
++	downloader.c \
++	renderer_discoverer.c \
++	video.c \
++	media_list_player.c \
++	media_discoverer.c
++endif
+ EXTRA_DIST =
+ 
+ if HAVE_WIN32
+diff --git a/lib/media.c b/lib/media.c
+index b37cf9197b..863d461a6c 100644
+--- a/lib/media.c
++++ b/lib/media.c
+@@ -76,6 +76,7 @@ static const vlc_meta_type_t libvlc_to_vlc_meta[] =
+     [libvlc_meta_Compilation]  = vlc_meta_Compilation,
+ };
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ static_assert(
+     ORIENT_TOP_LEFT     == (int) libvlc_video_orient_top_left &&
+     ORIENT_TOP_RIGHT    == (int) libvlc_video_orient_top_right &&
+@@ -102,6 +103,7 @@ static_assert(
+     MULTIVIEW_STEREO_FRAME          == (int) libvlc_video_multiview_stereo_frame &&
+     MULTIVIEW_STEREO_CHECKERBOARD   == (int) libvlc_video_multiview_stereo_checkerboard,
+     "Mismatch between libvlc_video_multiview_t and video_multiview_mode_t");
++#endif
+ 
+ static libvlc_media_t *input_item_add_subitem( libvlc_media_t *p_md,
+                                                input_item_t *item )
+@@ -673,6 +675,7 @@ libvlc_media_type_t libvlc_media_get_type( libvlc_media_t *p_md )
+     }
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ // Add a slave to the media descriptor
+ int libvlc_media_slaves_add( libvlc_media_t *p_md,
+                              libvlc_media_slave_type_t i_type,
+@@ -825,6 +828,7 @@ void libvlc_media_slaves_release( libvlc_media_slave_t **pp_slaves,
+     }
+     free( pp_slaves );
+ }
++#endif
+ 
+ static void
+ media_cookies_clear( libvlc_media_t *p_md )
+diff --git a/lib/media_internal.h b/lib/media_internal.h
+index e3ba8f254c..7e8580a90d 100644
+--- a/lib/media_internal.h
++++ b/lib/media_internal.h
+@@ -85,10 +85,12 @@ libvlc_track_type_to_escat( libvlc_track_type_t i_type )
+     {
+         case libvlc_track_audio:
+             return AUDIO_ES;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         case libvlc_track_video:
+             return VIDEO_ES;
+         case libvlc_track_text:
+             return SPU_ES;
++#endif
+         case libvlc_track_unknown:
+         default:
+             return UNKNOWN_ES;
+@@ -100,8 +102,10 @@ typedef struct libvlc_media_trackpriv_t
+     libvlc_media_track_t t;
+     union {
+         libvlc_audio_track_t audio;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         libvlc_video_track_t video;
+         libvlc_subtitle_track_t subtitle;
++#endif
+     };
+     vlc_es_id_t *es_id;
+     char *item_str_id;
+diff --git a/lib/media_player.c b/lib/media_player.c
+index c5e8e7ee02..3fd97358a1 100644
+--- a/lib/media_player.c
++++ b/lib/media_player.c
+@@ -30,27 +30,35 @@
+ #include <stdckdint.h>
+ 
+ #include <vlc/libvlc.h>
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ #include <vlc/libvlc_renderer_discoverer.h>
++#endif
+ #include <vlc/libvlc_picture.h>
+ #include <vlc/libvlc_media.h>
+ 
++#include <vlc_aout.h>
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ #include <vlc_demux.h>
+ #include <vlc_vout.h>
+-#include <vlc_aout.h>
+ #include <vlc_subpicture.h>
+ #include <vlc_actions.h>
+ #include <vlc_modules.h>
++#endif
+ 
+ #include "libvlc_internal.h"
+ #include "media_player_internal.h"
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ #include "renderer_discoverer_internal.h"
++#endif
+ #include "picture_internal.h"
+ 
+ #define ES_INIT (-2) /* -1 is reserved for ES deselect */
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ static int
+ snapshot_was_taken( vlc_object_t *p_this, char const *psz_cmd,
+                     vlc_value_t oldval, vlc_value_t newval, void *p_data );
++#endif
+ 
+ static void libvlc_media_player_destroy( libvlc_media_player_t *p_mi );
+ 
+@@ -137,6 +145,7 @@ on_state_changed(vlc_player_t *player, enum vlc_player_state new_state,
+                               libvlc_state_from_player(new_state));
+ }
+ 
++ #if !defined(MUSICFREE_AUDIO_PROFILE)
+ static void
+ on_recording_changed(vlc_player_t *player, bool recording, void *data)
+ {
+@@ -153,6 +162,7 @@ on_recording_changed(vlc_player_t *player, bool recording, void *data)
+ 
+     free(file_path);
+ }
++#endif
+ 
+ static void
+ on_error_changed(vlc_player_t *player, enum vlc_player_error error, void *data)
+@@ -244,12 +254,16 @@ track_type_from_cat(enum es_format_category_e cat)
+ {
+     switch (cat)
+     {
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         case VIDEO_ES:
+             return libvlc_track_video;
++#endif
+         case AUDIO_ES:
+             return libvlc_track_audio;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         case SPU_ES:
+             return libvlc_track_text;
++#endif
+         default:
+             return libvlc_track_unknown;
+     }
+@@ -484,6 +498,7 @@ on_cork_changed(vlc_player_t *player, unsigned cork_count, void *data)
+     mp->cbs->on_cork_changed(mp->cbs_opaque, cork_count == 1);
+ }
+ 
++ #if !defined(MUSICFREE_AUDIO_PROFILE)
+ static void
+ on_vout_changed(vlc_player_t *player, enum vlc_player_vout_action action,
+                 vout_thread_t *vout, enum vlc_vout_order order,
+@@ -537,6 +552,7 @@ on_prev_frame_status(vlc_player_t *player, int status, void *data)
+ 
+     mp->cbs->on_prev_frame_status(mp->cbs_opaque, status);
+ }
++#endif
+ 
+ // player aout callbacks
+ 
+@@ -598,11 +614,13 @@ static const struct vlc_player_cbs vlc_player_cbs = {
+     .on_media_subitems_changed = on_media_subitems_changed,
+     .on_media_attachments_added = on_media_attachments_added,
+     .on_cork_changed = on_cork_changed,
++    .on_stopping_current_media = on_stopping_current_media,
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     .on_vout_changed = on_vout_changed,
+     .on_recording_changed = on_recording_changed,
+-    .on_stopping_current_media = on_stopping_current_media,
+     .on_next_frame_status = on_next_frame_status,
+     .on_prev_frame_status = on_prev_frame_status,
++#endif
+ };
+ 
+ static const struct vlc_player_aout_cbs vlc_player_aout_cbs = {
+@@ -616,6 +634,7 @@ static const struct vlc_player_aout_cbs vlc_player_aout_cbs = {
+  *
+  * FIXME: This snapshot API interface makes no sense in media_player.
+  *************************************************************************/
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ static int snapshot_was_taken(vlc_object_t *p_this, char const *psz_cmd,
+                               vlc_value_t oldval, vlc_value_t newval, void *p_data )
+ {
+@@ -627,6 +646,7 @@ static int snapshot_was_taken(vlc_object_t *p_this, char const *psz_cmd,
+ 
+     return VLC_SUCCESS;
+ }
++#endif
+ 
+ /**************************************************************************
+  * Create a Media Instance object.
+@@ -648,7 +668,9 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+                          void *cbs_opaque )
+ {
+     libvlc_media_player_t * mp;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     int doinherit;
++#endif
+ 
+     /* No different versions to handle for now */
+     if (cbs != NULL)
+@@ -668,9 +690,9 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+ 
+     /* Input */
+     var_Create (mp, "rate", VLC_VAR_FLOAT|VLC_VAR_DOINHERIT);
+-    var_Create (mp, "sout", VLC_VAR_STRING);
+     var_Create (mp, "demux-filter", VLC_VAR_STRING);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     /* Video */
+     var_Create (mp, "vout", VLC_VAR_STRING|VLC_VAR_DOINHERIT);
+     var_Create (mp, "window", VLC_VAR_STRING);
+@@ -772,6 +794,7 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+     var_SetFloat(mp, "saturation", 1.f);
+     var_Create(mp, "gamma", VLC_VAR_FLOAT);
+     var_SetFloat(mp, "gamma", 1.f);
++#endif
+ 
+      /* Audio */
+     var_Create (mp, "aout", VLC_VAR_STRING | VLC_VAR_DOINHERIT);
+@@ -794,10 +817,12 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+     var_Create (mp, "amem-rate", VLC_VAR_INTEGER);
+     var_Create (mp, "amem-channels", VLC_VAR_INTEGER);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     /* Video Title */
+     var_Create (mp, "video-title-show", VLC_VAR_BOOL);
+     var_Create (mp, "video-title-position", VLC_VAR_INTEGER);
+     var_Create (mp, "video-title-timeout", VLC_VAR_INTEGER);
++#endif
+ 
+     /* Equalizer */
+     var_Create (mp, "equalizer-preamp", VLC_VAR_FLOAT);
+@@ -805,8 +830,10 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+     var_Create (mp, "equalizer-bands", VLC_VAR_STRING);
+     var_Create (mp, "equalizer-preset", VLC_VAR_STRING);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     /* variables for signalling creation of new files */
+     var_Create(mp, "record-file", VLC_VAR_STRING);
++#endif
+ 
+     mp->timer.id = NULL;
+     mp->p_libvlc_instance = instance;
+@@ -831,6 +858,7 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+ 
+     vlc_atomic_rc_init(&mp->rc);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     /* Snapshot initialization */
+     /* Attach a var callback to the global object to provide the glue between
+      * vout_thread that generates the event and media_player that re-emits it
+@@ -842,6 +870,7 @@ libvlc_media_player_new( libvlc_instance_t *instance,
+     if (mp->cbs != NULL && mp->cbs->on_screenshot_taken != NULL)
+         var_AddCallback(vlc_object_instance(mp),
+                         "snapshot-file", snapshot_was_taken, mp);
++#endif
+ 
+     libvlc_retain(instance);
+     return mp;
+@@ -893,10 +922,12 @@ static void libvlc_media_player_destroy( libvlc_media_player_t *p_mi )
+ {
+     assert( p_mi );
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     /* Detach Callback from the main libvlc object */
+     if (p_mi->cbs != NULL && p_mi->cbs->on_screenshot_taken != NULL)
+         var_DelCallback( vlc_object_instance(p_mi),
+                          "snapshot-file", snapshot_was_taken, p_mi );
++#endif
+ 
+     vlc_player_Lock(p_mi->player);
+     vlc_player_aout_RemoveListener(p_mi->player, p_mi->aout_listener);
+@@ -905,10 +936,12 @@ static void libvlc_media_player_destroy( libvlc_media_player_t *p_mi )
+ 
+     vlc_player_Delete(p_mi->player);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     free(p_mi->vout.default_dec_dev);
+     free(p_mi->vout.default_vout);
+     free(p_mi->vout.default_gl);
+     free(p_mi->vout.default_gles2);
++#endif
+ 
+     libvlc_instance_t *instance = p_mi->p_libvlc_instance;
+     vlc_object_delete(p_mi);
+@@ -1117,6 +1150,7 @@ int libvlc_media_player_stop_async( libvlc_media_player_t *p_mi )
+     return ret;
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ int libvlc_media_player_set_renderer( libvlc_media_player_t *p_mi,
+                                       libvlc_renderer_item_t *p_litem )
+ {
+@@ -1407,6 +1441,8 @@ void libvlc_media_player_set_android_context( libvlc_media_player_t *p_mi,
+ #endif
+ }
+ 
++#endif
++
+ void libvlc_audio_set_callbacks( libvlc_media_player_t *mp,
+                                  libvlc_audio_play_cb play_cb,
+                                  libvlc_audio_pause_cb pause_cb,
+@@ -1969,6 +2005,7 @@ bool libvlc_media_player_program_scrambled(libvlc_media_player_t *p_mi)
+     return b_program_scrambled;
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ void libvlc_media_player_next_frame( libvlc_media_player_t *p_mi )
+ {
+     vlc_player_t *player = p_mi->player;
+@@ -1988,7 +2025,9 @@ void libvlc_media_player_previous_frame( libvlc_media_player_t *p_mi )
+ 
+     vlc_player_Unlock(player);
+ }
++#endif
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ /**
+  * Private lookup table to get subpicture alignment flag values corresponding
+  * to a libvlc_position_t enumerated value.
+@@ -2020,6 +2059,7 @@ void libvlc_media_player_set_video_title_display( libvlc_media_player_t *p_mi, l
+         var_SetBool( p_mi, "video-title-show", false );
+     }
+ }
++#endif
+ 
+ libvlc_media_tracklist_t *
+ libvlc_media_player_get_tracklist(libvlc_media_player_t *p_mi,
+@@ -2070,7 +2110,11 @@ libvlc_media_player_get_track_from_id( libvlc_media_player_t *p_mi,
+ 
+     vlc_player_Lock(player);
+ 
++#if defined(MUSICFREE_AUDIO_PROFILE)
++    enum es_format_category_e cats[] = { AUDIO_ES };
++#else
+     enum es_format_category_e cats[] = { VIDEO_ES, AUDIO_ES, SPU_ES };
++#endif
+     for (size_t i = 0; i < ARRAY_SIZE(cats); ++i)
+     {
+         enum es_format_category_e cat = cats[i];
+@@ -2181,6 +2225,7 @@ libvlc_media_player_select_tracks_by_ids( libvlc_media_player_t *p_mi,
+     vlc_player_Unlock(player);
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ int libvlc_media_player_add_slave( libvlc_media_player_t *p_mi,
+                                    libvlc_media_slave_type_t i_type,
+                                    const char *psz_uri, bool b_select )
+@@ -2198,6 +2243,7 @@ int libvlc_media_player_add_slave( libvlc_media_player_t *p_mi,
+     vlc_player_Unlock(player);
+     return ret;
+ }
++#endif
+ 
+ /**
+  * Maximum size of a formatted equalizer amplification band frequency value.
+@@ -2438,6 +2484,7 @@ int libvlc_media_player_get_role(libvlc_media_player_t *mp)
+     return ret;
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ void libvlc_media_player_record( libvlc_media_player_t *p_mi,
+                                  bool enable,
+                                  const char *path)
+@@ -2448,6 +2495,7 @@ void libvlc_media_player_record( libvlc_media_player_t *p_mi,
+     vlc_player_SetRecordingEnabled(player, enable, path);
+     vlc_player_Unlock(player);
+ }
++#endif
+ 
+ #define PLAYER_TIME_CORE_TO_LIB(point) { \
+     .position = point->position, \
+@@ -2597,6 +2645,7 @@ libvlc_media_player_time_point_get_next_date(const libvlc_media_player_time_poin
+     return US_FROM_VLC_TICK(date);
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ #include <vlc_vout_display.h>
+ 
+ /* make sure surface structures from libvlc can be passed as such to vlc
+@@ -2630,6 +2679,8 @@ static_assert(libvlc_video_primaries_BT601_525 == (cast_)COLOR_PRIMARIES_BT601_5
+               , "libvlc video color primaries mismatch");
+ #undef cast_
+ 
++#endif
++
+ #define cast_ libvlc_abloop_t
+ static_assert(libvlc_abloop_none == (cast_) VLC_PLAYER_ABLOOP_NONE &&
+               libvlc_abloop_a    == (cast_) VLC_PLAYER_ABLOOP_A &&
+diff --git a/lib/media_player_internal.h b/lib/media_player_internal.h
+index c33c1c629e..58dceb7e1f 100644
+--- a/lib/media_player_internal.h
++++ b/lib/media_player_internal.h
+@@ -28,12 +28,17 @@
+ #include <vlc/libvlc_media.h>
+ #include <vlc_input.h>
+ #include <vlc_player.h>
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ #include <vlc_viewpoint.h>
++#endif
+ #include "media_internal.h"
+ 
+ #include "../modules/audio_filter/equalizer_presets.h"
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ typedef void (*libvlc_media_player_vout_detach_cb)(libvlc_media_player_t *player);
++#endif
++
+ struct libvlc_media_player_t
+ {
+     struct vlc_object_t obj;
+@@ -56,6 +61,7 @@ struct libvlc_media_player_t
+         bool seeking;
+     } timer;
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     struct {
+         /*
+          * Tracks the active libvlc window/output integration and the default
+@@ -72,6 +78,7 @@ struct libvlc_media_player_t
+         char *default_gl;
+         char *default_gles2;
+     } vout;
++#endif
+ };
+ 
+ /**
+diff --git a/lib/media_track.c b/lib/media_track.c
+index 0526ff32f0..e6f73c2eda 100644
+--- a/lib/media_track.c
++++ b/lib/media_track.c
+@@ -27,7 +27,6 @@
+ #include <stdckdint.h>
+ 
+ #include <vlc/libvlc.h>
+-#include <vlc/libvlc_picture.h>
+ #include <vlc/libvlc_media.h>
+ 
+ #include "libvlc_internal.h"
+@@ -66,6 +65,7 @@ libvlc_media_trackpriv_from_es( libvlc_media_trackpriv_t *trackpriv,
+     default:
+         track->i_type = libvlc_track_unknown;
+         break;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     case VIDEO_ES:
+         track->u.video = &trackpriv->video;
+         track->i_type = libvlc_track_video;
+@@ -95,18 +95,21 @@ libvlc_media_trackpriv_from_es( libvlc_media_trackpriv_t *trackpriv,
+                 es->video.multiview_mode <= MULTIVIEW_STEREO_CHECKERBOARD );
+         track->u.video->i_multiview = (int) es->video.multiview_mode;
+         break;
++#endif
+     case AUDIO_ES:
+         track->u.audio = &trackpriv->audio;
+         track->i_type = libvlc_track_audio;
+         track->u.audio->i_channels = es->audio.i_channels;
+         track->u.audio->i_rate = es->audio.i_rate;
+         break;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     case SPU_ES:
+         track->u.subtitle = &trackpriv->subtitle;
+         track->i_type = libvlc_track_text;
+         track->u.subtitle->psz_encoding = es->subs.psz_encoding != NULL ?
+                                         strdup(es->subs.psz_encoding) : NULL;
+         break;
++#endif
+     }
+ }
+ 
+@@ -134,11 +137,13 @@ static void libvlc_media_track_clean( libvlc_media_track_t *track )
+     {
+     case libvlc_track_audio:
+         break;
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     case libvlc_track_video:
+         break;
+     case libvlc_track_text:
+         free( track->u.subtitle->psz_encoding );
+         break;
++#endif
+     case libvlc_track_unknown:
+     default:
+         break;
+diff --git a/lib/parser.c b/lib/parser.c
+index 05778a556f..c1ac093392 100644
+--- a/lib/parser.c
++++ b/lib/parser.c
+@@ -37,15 +37,6 @@
+ #include "media_internal.h"
+ #include "picture_internal.h"
+ 
+-static_assert(VLC_THUMBNAILER_SEEK_NONE == (int) libvlc_thumbnailer_seek_none &&
+-              VLC_THUMBNAILER_SEEK_TIME == (int) libvlc_thumbnailer_seek_time &&
+-              VLC_THUMBNAILER_SEEK_POS  == (int) libvlc_thumbnailer_seek_pos,
+-              "lib/vlc_thumbnailer seek type mismatch");
+-
+-static_assert(VLC_THUMBNAILER_SEEK_PRECISE == (int) libvlc_media_thumbnail_seek_precise &&
+-              VLC_THUMBNAILER_SEEK_FAST    == (int) libvlc_media_thumbnail_seek_fast,
+-              "lib/vlc_thumbnailer seek speed mismatch");
+-
+ struct libvlc_parser_t
+ {
+     libvlc_instance_t *libvlc;
+@@ -55,28 +46,14 @@ struct libvlc_parser_t
+ union libvlc_parser_cbs_internal
+ {
+     const struct libvlc_parser_cbs *parser;
+-    const struct libvlc_thumbnailer_cbs *thumbnailer;
+ };
+ 
+ struct libvlc_parser_task
+ {
+-    /* LibVLC instance */
+-    libvlc_instance_t *instance;
+-
+-    /* media to parse/thumbnail */
++    /* media to parse */
+     libvlc_media_t *media;
+ 
+-    /* Dimensions (for thumbnailing) */
+-    unsigned int width;
+-    unsigned int height;
+-
+-    /* True to enable crop (false by default) (for thumbnailing) */
+-    bool crop;
+-
+-    /* Picture type (for thumbnailing) */
+-    libvlc_picture_type_t type;
+-
+-    /* parser/thumbnailer callbacks */
++    /* parser callbacks */
+     union libvlc_parser_cbs_internal cbs;
+ 
+     /* opaque data for cbs */
+@@ -89,12 +66,9 @@ struct libvlc_parser_task
+     vlc_atomic_rc_t rc;
+ };
+ 
+-/* Internal function to copy the required members of the request object into a heap-allocated
+-   structure for further processing. The object is allocated on the heap to ensure it remains
+-   valid for the entire duration of the parsing or thumbnailing operation. */
++/* Keep the parser request state independent from the caller-owned request. */
+ static struct libvlc_parser_task *
+ libvlc_parser_task_new(libvlc_media_t *media,
+-                       const libvlc_thumbnailer_request_t *thumbnailer_req,
+                        union libvlc_parser_cbs_internal cbs,
+                        void *cbs_opaque)
+ {
+@@ -102,28 +76,17 @@ libvlc_parser_task_new(libvlc_media_t *media,
+     if (task == NULL)
+         return NULL;
+ 
+-    task->instance = NULL;
+     task->media = libvlc_media_retain(media);
+     task->cbs = cbs;
+     task->cbs_opaque = cbs_opaque;
+     task->preparser_req = NULL;
+     vlc_atomic_rc_init(&task->rc);
+-    if (thumbnailer_req != NULL)
+-    {
+-        task->width = thumbnailer_req->width;
+-        task->height = thumbnailer_req->height;
+-        task->crop = thumbnailer_req->crop;
+-        task->type = thumbnailer_req->type;
+-    }
+     return task;
+ }
+ 
+ /* Internal function to destroy the heap allocated task object */
+ static void libvlc_parser_task_destroy(struct libvlc_parser_task *task)
+ {
+-    if (task->instance != NULL)
+-        libvlc_release(task->instance);
+-
+     if (task->preparser_req != NULL)
+         vlc_preparser_req_Release(task->preparser_req);
+ 
+@@ -136,8 +99,7 @@ static void vlc_preparser_subtree_added(vlc_preparser_req *req,
+                                         void *user_data)
+ {
+     struct libvlc_parser_task *task = user_data;
+-    input_item_t *item = vlc_preparser_req_GetItem(req);
+-    assert(task->media->p_input_item == item);
++    assert(task->media->p_input_item == vlc_preparser_req_GetItem(req));
+     libvlc_media_add_subtree(task->media, node);
+     input_item_node_Delete(node);
+ }
+@@ -146,8 +108,7 @@ static void
+ vlc_preparser_ended(vlc_preparser_req *req, int status, void *user_data)
+ {
+     struct libvlc_parser_task *task = user_data;
+-    input_item_t *item = vlc_preparser_req_GetItem(req);
+-    assert(task->media->p_input_item == item);
++    assert(task->media->p_input_item == vlc_preparser_req_GetItem(req));
+ 
+     libvlc_parser_status_t parser_status;
+     switch (status)
+@@ -188,8 +149,7 @@ static void vlc_preparser_attachments_added(vlc_preparser_req *req,
+                                             void *user_data)
+ {
+     struct libvlc_parser_task *task = user_data;
+-    input_item_t *item = vlc_preparser_req_GetItem(req);
+-    assert(task->media->p_input_item == item);
++    assert(task->media->p_input_item == vlc_preparser_req_GetItem(req));
+ 
+     if (task->cbs.parser->on_attachments_added == NULL)
+         return;
+@@ -216,30 +176,6 @@ static const struct vlc_preparser_cbs preparser_callbacks = {
+     .on_attachments_added = vlc_preparser_attachments_added,
+ };
+ 
+-static void vlc_thumbnailer_ended(vlc_preparser_req *req, int status, picture_t *thumbnail, void *data)
+-{
+-    VLC_UNUSED(status);
+-    struct libvlc_parser_task *task = data;
+-    input_item_t *item = vlc_preparser_req_GetItem(req);
+-    assert(task->media->p_input_item == item);
+-
+-    libvlc_picture_t* pic = NULL;
+-    if (thumbnail != NULL)
+-        pic = libvlc_picture_new(VLC_OBJECT(task->instance->p_libvlc_int),
+-                                 thumbnail, task->type, task->width,
+-                                 task->height, task->crop);
+-
+-    task->cbs.thumbnailer->on_ended(task->cbs_opaque, task, pic);
+-    if (pic != NULL)
+-        libvlc_picture_release(pic);
+-
+-    libvlc_parser_task_release(task);
+-}
+-
+-static const struct vlc_thumbnailer_cbs thumbnailer_callbacks = {
+-    .on_ended = vlc_thumbnailer_ended,
+-};
+-
+ /* Calculate a combination of VLC_PREPARSER_TYPE_* and VLC_PREPARSER_OPTION_* flags
+    (to be passed to vlc_preparser_Push) from libvlc_media_parse_flag_t. Return -1 to skip parsing */
+ static int get_parser_type_options(libvlc_media_parse_flag_t parse_flag)
+@@ -313,7 +249,7 @@ libvlc_parser_queue(libvlc_parser_t *parser,
+         .parser = cbs,
+     };
+ 
+-    struct libvlc_parser_task *task = libvlc_parser_task_new(media, NULL, req_cbs, cbs_opaque);
++    struct libvlc_parser_task *task = libvlc_parser_task_new(media, req_cbs, cbs_opaque);
+     if (task == NULL)
+         return NULL;
+ 
+@@ -340,60 +276,11 @@ libvlc_parser_queue_thumbnailing(libvlc_parser_t *parser,
+                                  const struct libvlc_thumbnailer_cbs *cbs,
+                                  void *cbs_opaque)
+ {
+-    assert(parser != NULL);
+-    assert(req != NULL && req->media != NULL);
+-    assert(cbs != NULL && cbs->on_ended != NULL);
+-
+-    /* No different versions to handle for now */
+-    assert(req->version <= 0);
+-    assert(cbs->version <= 0);
+-
+-    input_item_t *item = req->media->p_input_item;
+-
+-    union libvlc_parser_cbs_internal req_cbs = {
+-        .thumbnailer = cbs,
+-    };
+-
+-    struct libvlc_parser_task *task = libvlc_parser_task_new(req->media, req, req_cbs, cbs_opaque);
+-
+-    if (task == NULL)
+-        return NULL;
+-
+-    task->instance = libvlc_retain(parser->libvlc);
+-    libvlc_thumbnailer_seek_type_t seek_type = req->seek.type;
+-    struct vlc_thumbnailer_arg thumb_arg;
+-    thumb_arg.hw_dec = req->hw_dec;
+-
+-    switch (seek_type)
+-    {
+-        case libvlc_thumbnailer_seek_time:
+-            thumb_arg.seek.type = VLC_THUMBNAILER_SEEK_TIME;
+-            thumb_arg.seek.time = vlc_tick_from_libvlc_time(req->seek.value.time);
+-            break;
+-        case libvlc_thumbnailer_seek_pos:
+-            thumb_arg.seek.type = VLC_THUMBNAILER_SEEK_POS;
+-            thumb_arg.seek.pos = req->seek.value.pos;
+-            break;
+-        default:
+-            thumb_arg.seek.type = VLC_THUMBNAILER_SEEK_NONE;
+-            break;
+-    }
+-
+-    thumb_arg.seek.speed = req->seek.speed == libvlc_media_thumbnail_seek_fast
+-                         ? VLC_THUMBNAILER_SEEK_FAST : VLC_THUMBNAILER_SEEK_PRECISE;
+-
+-    libvlc_parser_task_retain(task);
+-
+-    task->preparser_req = vlc_preparser_GenerateThumbnail(parser->preparser, item, &thumb_arg,
+-                                                          &thumbnailer_callbacks, task);
+-
+-    if (task->preparser_req == NULL)
+-    {
+-        libvlc_parser_task_destroy(task);
+-        return NULL;
+-    }
+-
+-    return task;
++    VLC_UNUSED(parser);
++    VLC_UNUSED(req);
++    VLC_UNUSED(cbs);
++    VLC_UNUSED(cbs_opaque);
++    return NULL;
+ }
+ 
+ size_t libvlc_parser_cancel_request(libvlc_parser_t *parser,
+@@ -426,10 +313,8 @@ libvlc_parser_t *libvlc_parser_new(libvlc_instance_t *inst,
+         timeout = cfg->timeout;
+ 
+     const struct vlc_preparser_cfg preparser_cfg = {
+-        .types = VLC_PREPARSER_TYPE_PARSE | VLC_PREPARSER_TYPE_FETCHMETA_ALL |
+-                 VLC_PREPARSER_TYPE_THUMBNAIL,
++        .types = VLC_PREPARSER_TYPE_PARSE | VLC_PREPARSER_TYPE_FETCHMETA_ALL,
+         .max_parser_threads = cfg->max_parser_threads,
+-        .max_thumbnailer_threads = cfg->max_thumbnailer_threads,
+         .timeout = vlc_tick_from_libvlc_time(timeout),
+         .external_process = false,
+     };
+diff --git a/lib/picture.c b/lib/picture.c
+index 9613fa962c..ec72a24eb9 100644
+--- a/lib/picture.c
++++ b/lib/picture.c
+@@ -31,9 +31,7 @@
+ #include "libvlc_internal.h"
+ 
+ #include <vlc_atomic.h>
+-#include <vlc_picture.h>
+ #include <vlc_block.h>
+-#include <vlc_image.h>
+ #include <vlc_input.h>
+ #include <vlc_fs.h>
+ 
+@@ -55,6 +53,7 @@ struct libvlc_picture_list_t
+     libvlc_picture_t* pictures[];
+ };
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ libvlc_picture_t* libvlc_picture_new( vlc_object_t* p_obj, picture_t* input,
+                                       libvlc_picture_type_t type,
+                                       unsigned int width, unsigned int height,
+@@ -94,6 +93,7 @@ libvlc_picture_t* libvlc_picture_new( vlc_object_t* p_obj, picture_t* input,
+ 
+     return pic;
+ }
++#endif
+ 
+ static void libvlc_picture_block_release( block_t* block )
+ {
+@@ -118,9 +118,22 @@ static bool IsSupportedByLibVLC(vlc_fourcc_t fcc)
+     }
+ }
+ 
++static vlc_fourcc_t MusicFreePictureMimeToFourcc(const char *mime)
++{
++    if (mime == NULL)
++        return 0;
++    if (!strcmp(mime, "image/png"))
++        return VLC_CODEC_PNG;
++    if (!strcmp(mime, "image/jpeg"))
++        return VLC_CODEC_JPEG;
++    if (!strcmp(mime, "image/webp"))
++        return VLC_CODEC_WEBP;
++    return 0;
++}
++
+ static libvlc_picture_t* libvlc_picture_from_attachment( input_attachment_t* attachment )
+ {
+-    vlc_fourcc_t fcc = image_Mime2Fourcc( attachment->psz_mime );
++    vlc_fourcc_t fcc = MusicFreePictureMimeToFourcc( attachment->psz_mime );
+     if (!IsSupportedByLibVLC(fcc))
+         return NULL;
+ 
+diff --git a/lib/picture_internal.h b/lib/picture_internal.h
+index 2cf299fed9..b2c033a7e9 100644
+--- a/lib/picture_internal.h
++++ b/lib/picture_internal.h
+@@ -39,10 +39,12 @@
+  * the required format and stored as a block_t
+  * The returned picture must be released through libvlc_picture_release
+  */
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ libvlc_picture_t* libvlc_picture_new( vlc_object_t* p_obj, picture_t* p_pic,
+                                       libvlc_picture_type_t i_format,
+                                       unsigned int i_width, unsigned int i_height,
+                                       bool b_crop );
++#endif
+ 
+ libvlc_picture_list_t* libvlc_picture_list_from_attachments( input_attachment_t* const* attachments,
+                                                              size_t nb_attachments );
+diff --git a/modules/access/file.c b/modules/access/file.c
+index 8d57fd3d74..3e59ed6eba 100644
+--- a/modules/access/file.c
++++ b/modules/access/file.c
+@@ -55,9 +55,6 @@
+ #include "fs.h"
+ #include <vlc_access.h>
+ #include <vlc_interrupt.h>
+-#ifdef _WIN32
+-# include <vlc_charset.h>
+-#endif
+ #include <vlc_fs.h>
+ #include <vlc_url.h>
+ 
+@@ -227,21 +224,11 @@ int FileOpen( vlc_object_t *p_this )
+     fcntl (fd, F_SETFL, fcntl (fd, F_GETFL) & ~O_NONBLOCK);
+ #endif
+ 
+-    /* Directories can be opened and read from, but only readdir() knows
+-     * how to parse the data. The directory plugin will do it. */
++    /* The audio profile has no directory access. */
+     if (S_ISDIR (st.st_mode))
+     {
+-#ifdef HAVE_FDOPENDIR
+-        DIR *p_dir = fdopendir(fd);
+-        if (!p_dir) {
+-            msg_Err (p_access, "fdopendir error: %s", vlc_strerror_c(errno));
+-            goto error;
+-        }
+-        return DirInit (p_access, p_dir);
+-#else
+         msg_Dbg (p_access, "ignoring directory");
+         goto error;
+-#endif
+     }
+ 
+     access_sys_t *p_sys = vlc_obj_malloc(p_this, sizeof (*p_sys));
+@@ -292,12 +279,6 @@ void FileClose (vlc_object_t * p_this)
+ {
+     stream_t     *p_access = (stream_t*)p_this;
+ 
+-    if (p_access->pf_read == NULL)
+-    {
+-        DirClose (p_this);
+-        return;
+-    }
+-
+     access_sys_t *p_sys = p_access->p_sys;
+ 
+     vlc_close (p_sys->fd);
+diff --git a/modules/access/fs.c b/modules/access/fs.c
+index 0762bccbfd..122a01aba9 100644
+--- a/modules/access/fs.c
++++ b/modules/access/fs.c
+@@ -37,18 +37,4 @@ vlc_module_begin ()
+     set_capability( "access", 50 )
+     add_shortcut( "file", "fd", "stream" )
+     set_callbacks( FileOpen, FileClose )
+-
+-    add_submodule()
+-    set_section( N_("Directory" ), NULL )
+-    set_capability( "access", 55 )
+-#ifndef HAVE_FDOPENDIR
+-    add_shortcut( "file", "directory", "dir" )
+-#else
+-    add_shortcut( "directory", "dir" )
+-#endif
+-    set_callbacks( DirOpen, DirClose )
+-
+-    add_bool("list-special-files", false, N_("List special files"),
+-             N_("Include devices and pipes when listing directories"))
+-    add_obsolete_string("directory-sort") /* since 3.0.0 */
+ vlc_module_end ()
+diff --git a/modules/access/fs.h b/modules/access/fs.h
+index f85213f241..1e30a646e7 100644
+--- a/modules/access/fs.h
++++ b/modules/access/fs.h
+@@ -18,11 +18,5 @@
+  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+  *****************************************************************************/
+ 
+-#include <vlc_fs.h>
+-
+ int FileOpen (vlc_object_t *);
+ void FileClose (vlc_object_t *);
+-
+-int DirOpen (vlc_object_t *);
+-int DirInit (stream_t *p_access, vlc_DIR *handle);
+-void DirClose (vlc_object_t *);
+diff --git a/modules/codec/Makefile.am b/modules/codec/Makefile.am
+index 46fd1b42e0..4a3feaca2a 100644
+--- a/modules/codec/Makefile.am
++++ b/modules/codec/Makefile.am
+@@ -377,18 +377,23 @@ endif
+ 
+ ### FFmpeg/libav ###
+ libavcodec_common_la_SOURCES = codec/avcodec/fourcc.c codec/avcodec/avcommon.h \
+-	codec/avcodec/chroma.c codec/avcodec/chroma.h \
+ 	codec/avcodec/avcommon_compat.h
++if !MUSICFREE_AUDIO_PROFILE
++libavcodec_common_la_SOURCES += codec/avcodec/chroma.c codec/avcodec/chroma.h
++endif
+ libavcodec_common_la_CFLAGS = $(AVCODEC_CFLAGS) $(AM_CFLAGS)
+ libavcodec_common_la_LDFLAGS = -static
+ 
+ libavcodec_plugin_la_SOURCES = \
++	codec/avcodec/audio.c \
++        codec/avcodec/avcodec.c codec/avcodec/avcodec.h
++if !MUSICFREE_AUDIO_PROFILE
++libavcodec_plugin_la_SOURCES += \
+ 	codec/avcodec/video.c \
+ 	codec/avcodec/subtitle.c \
+-	codec/avcodec/audio.c \
+ 	codec/avcodec/va.c codec/avcodec/va.h \
+-	codec/avcodec/avcodec.c codec/avcodec/avcodec.h \
+ 	packetizer/av1_obu.c packetizer/av1_obu.h packetizer/av1.h
++endif
+ if ENABLE_SOUT
+ libavcodec_plugin_la_SOURCES += codec/avcodec/encoder.c
+ endif
+@@ -397,7 +402,10 @@ libavcodec_plugin_la_LIBADD = $(AVCODEC_LIBS) $(LIBM) libavcodec_common.la
+ libavcodec_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS)
+ 
+ if MERGE_FFMPEG
+-libavcodec_plugin_la_SOURCES += demux/avformat/demux.c access/avio.c packetizer/avparser.c
++libavcodec_plugin_la_SOURCES += demux/avformat/demux.c
++if !MUSICFREE_AUDIO_PROFILE
++libavcodec_plugin_la_SOURCES += access/avio.c packetizer/avparser.c
++endif
+ libavcodec_plugin_la_CFLAGS += $(AVFORMAT_CFLAGS) $(AVUTIL_CFLAGS)
+ libavcodec_plugin_la_LIBADD += $(AVFORMAT_LIBS) $(AVUTIL_LIBS) $(LIBM)
+ if ENABLE_SOUT
+diff --git a/modules/codec/avcodec/avcodec.c b/modules/codec/avcodec/avcodec.c
+index a9df56505c..5ac640a9c5 100644
+--- a/modules/codec/avcodec/avcodec.c
++++ b/modules/codec/avcodec/avcodec.c
+@@ -33,17 +33,19 @@
+ #include <vlc_codec.h>
+ #include <vlc_demux.h>
+ #include <vlc_avcodec.h>
+-#include <vlc_cpu.h>
++#ifndef MUSICFREE_AUDIO_PROFILE
++# include <vlc_cpu.h>
++#endif
+ 
+ #include <libavcodec/avcodec.h>
+ 
+ #include "avcodec.h"
+-#include "chroma.h"
+ #include "avcommon.h"
+ 
+ /****************************************************************************
+  * Local prototypes
+  ****************************************************************************/
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static const int  frame_skip_list[] = { -1, 0, 1, 2, 3, 4 };
+ static const char *const frame_skip_list_text[] =
+   { N_("None"), N_("Default"), N_("Non-ref"), N_("Bidir"), N_("Non-key"), N_("All") };
+@@ -54,7 +56,8 @@ static const char *const idct_skip_list_text[] =
+ 
+ static const int  nloopf_list[] = { 0, 1, 2, 3, 4 };
+ static const char *const nloopf_list_text[] =
+-  { N_("None"), N_("Non-ref"), N_("Bidir"), N_("Non-key"), N_("All") };
++  { N_("None"), N_("Default"), N_("Non-ref"), N_("Bidir"), N_("Non-key"), N_("All") };
++#endif
+ 
+ #ifdef ENABLE_SOUT
+ static const char *const enc_hq_list[] = { "rd", "bits", "simple" };
+@@ -66,39 +69,37 @@ static const char *const enc_hq_list_text[] = {
+ # ifdef HAVE_LIBAVFORMAT_AVFORMAT_H
+ #  include "../../demux/avformat/avformat.h"
+ # endif
++# ifndef MUSICFREE_AUDIO_PROFILE
+ # include "../../access/avio.h"
+ # include "../../packetizer/avparser.h"
++# endif
+ #endif
+ 
+ /*****************************************************************************
+  * Module descriptor
+  *****************************************************************************/
+-#define MODULE_DESCRIPTION N_( "Various audio and video decoders/encoders " \
++#define MODULE_DESCRIPTION N_( "Audio decoders delivered by the FFmpeg library" )
++#ifndef MUSICFREE_AUDIO_PROFILE
++# undef MODULE_DESCRIPTION
++# define MODULE_DESCRIPTION N_( "Various audio and video decoders/encoders " \
+         "delivered by the FFmpeg library. This includes (MS)MPEG4, DivX, SV1,"\
+         "H261, H263, H264, WMV, WMA, AAC, AMR, DV, MJPEG and other codecs")
++#endif
+ 
+ vlc_module_begin ()
+     set_shortname( "FFmpeg")
+-    set_subcategory( SUBCAT_INPUT_VCODEC )
++    set_subcategory( SUBCAT_INPUT_ACODEC )
+     /* decoder main module */
+-    set_description( N_("FFmpeg audio/video decoder") )
++    set_description( N_("FFmpeg audio decoder") )
+     set_help( MODULE_DESCRIPTION )
+     set_section( N_("Decoding") , NULL )
+ 
+-    add_shortcut("ffmpeg")
+-    set_capability("video decoder", 70)
+-    set_callbacks(InitVideoDec, EndVideoDec)
+-
+-    add_submodule()
+-    add_shortcut("ffmpeghw")
+-    set_capability("video decoder", 10001)
+-    set_callbacks(InitVideoHwDec, EndVideoDec)
+-
+     add_submodule()
+     add_shortcut("ffmpeg")
+     set_capability("audio decoder", 70)
+     set_callbacks(InitAudioDec, EndAudioDec)
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     add_submodule()
+     add_shortcut("ffmpeg")
+     set_capability("spu decoder", 70)
+@@ -127,6 +128,12 @@ vlc_module_begin ()
+     add_obsolete_string( "avcodec-hw" ) /* removed since 4.0.0 */
+     add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT )
+     add_string( "avcodec-options", NULL, AV_OPTIONS_TEXT, AV_OPTIONS_LONGTEXT )
++#else
++    add_integer( "avcodec-debug", 0, DEBUG_TEXT, DEBUG_LONGTEXT )
++    add_string( "avcodec-codec", NULL, CODEC_TEXT, CODEC_LONGTEXT )
++    add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT )
++    add_string( "avcodec-options", NULL, AV_OPTIONS_TEXT, AV_OPTIONS_LONGTEXT )
++#endif
+ 
+ 
+ #ifdef ENABLE_SOUT
+@@ -214,13 +221,16 @@ vlc_module_begin ()
+ # ifdef HAVE_LIBAVFORMAT_AVFORMAT_H
+ #   include "../../demux/avformat/avformat.c"
+ # endif
++# ifndef MUSICFREE_AUDIO_PROFILE
+     add_submodule ()
+         AVIO_MODULE
+     add_submodule ()
+         AVPARSER_MODULE
++# endif
+ #endif
+ vlc_module_end ()
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static const AVCodec *FindHwCapableDecoder(enum AVCodecID codec_id)
+ {
+     void *iter = NULL;
+@@ -237,6 +247,7 @@ static const AVCodec *FindHwCapableDecoder(enum AVCodecID codec_id)
+     }
+     return NULL;
+ }
++#endif
+ 
+ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
+                                      const AVCodec **restrict codecp,
+@@ -271,9 +282,16 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
+         }
+         free( psz_decoder );
+     }
++    /* The audio profile has no hardware video decoder path.  In particular,
++     * do not retain the generic hardware-capability scan in the final Mach-O. */
++#ifndef MUSICFREE_AUDIO_PROFILE
+     if( !p_codec && b_require_hw_codec )
+         p_codec = FindHwCapableDecoder( i_codec_id );
+-    else if ( !p_codec )
++    else if( !p_codec )
++#else
++    (void)b_require_hw_codec;
++    if( !p_codec )
++#endif
+         p_codec = avcodec_find_decoder( i_codec_id );
+     if( !p_codec )
+     {
+diff --git a/modules/codec/avcodec/avcodec.h b/modules/codec/avcodec/avcodec.h
+index c6a8d48293..9db54ee131 100644
+--- a/modules/codec/avcodec/avcodec.h
++++ b/modules/codec/avcodec/avcodec.h
+@@ -20,7 +20,6 @@
+  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+  *****************************************************************************/
+ 
+-#include "chroma.h"
+ #include "avcommon.h"
+ 
+ /* VLC <-> avcodec tables */
+@@ -29,6 +28,7 @@ bool GetFfmpegCodec( const es_format_t *,
+ vlc_fourcc_t GetVlcFourcc( enum AVCodecID i_ffmpeg_codec );
+ vlc_fourcc_t GetVlcAudioFormat( int i_sample_fmt );
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ /* Video encoder module */
+ int  InitVideoEnc ( vlc_object_t * );
+ void EndVideoEnc( encoder_t * );
+@@ -37,14 +37,17 @@ void EndVideoEnc( encoder_t * );
+ int InitVideoDec( vlc_object_t * );
+ int InitVideoHwDec( vlc_object_t * );
+ void EndVideoDec( vlc_object_t * );
++#endif
+ 
+ /* Audio Decoder */
+ int InitAudioDec( vlc_object_t * );
+ void EndAudioDec( vlc_object_t * );
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ /* Subtitle Decoder */
+ int InitSubtitleDec( vlc_object_t * );
+ void EndSubtitleDec( vlc_object_t * );
++#endif
+ 
+ /* Initialize decoder */
+ AVCodecContext *ffmpeg_AllocContext( decoder_t *, const AVCodec **, bool );
+diff --git a/modules/codec/avcodec/fourcc.c b/modules/codec/avcodec/fourcc.c
+index fe68b300e9..a7ffc4dfe3 100644
+--- a/modules/codec/avcodec/fourcc.c
++++ b/modules/codec/avcodec/fourcc.c
+@@ -42,8 +42,9 @@ struct vlc_avcodec_fourcc
+ };
+ 
+ /*
+- * Video Codecs
++ * Video codecs are intentionally absent from the MusicFree audio profile.
+  */
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static const struct vlc_avcodec_fourcc video_codecs[] =
+ {
+     { VLC_CODEC_MP1V, AV_CODEC_ID_MPEG1VIDEO },
+@@ -331,6 +332,7 @@ static const struct vlc_avcodec_fourcc video_codecs[] =
+ #endif
+ 
+ };
++#endif
+ 
+ /*
+  *  Audio Codecs
+@@ -517,7 +519,8 @@ static const struct vlc_avcodec_fourcc audio_codecs[] =
+     /* ffmpeg only: AV_CODEC_ID_SMV */
+ };
+ 
+-/* Subtitle streams */
++/* Subtitle streams are intentionally absent from the MusicFree audio profile. */
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static const struct vlc_avcodec_fourcc spu_codecs[] =
+ {
+     { VLC_CODEC_SPU, AV_CODEC_ID_DVD_SUBTITLE },
+@@ -544,6 +547,7 @@ static const struct vlc_avcodec_fourcc spu_codecs[] =
+     /* ffmpeg only: AV_CODEC_ID_PJS */
+     /* ffmpeg only: AV_CODEC_ID_ASS */
+ };
++#endif
+ 
+ bool GetFfmpegCodec( const es_format_t *es,
+                      enum AVCodecID *pi_ffmpeg_codec, const char **ppsz_name )
+@@ -551,25 +555,31 @@ bool GetFfmpegCodec( const es_format_t *es,
+     const struct vlc_avcodec_fourcc *base;
+     size_t count;
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     if (es->i_codec == VLC_CODEC_VP8 && es_format_HasVpxAlpha(es)) // contains alpha extradata
+         return false;
+     if (es->i_codec == VLC_CODEC_VP9 && es_format_HasVpxAlpha(es)) // contains alpha extradata
+         return false;
++#endif
+ 
+     switch( es->i_cat )
+     {
++#ifndef MUSICFREE_AUDIO_PROFILE
+         case VIDEO_ES:
+             base = video_codecs;
+             count = ARRAY_SIZE(video_codecs);
+             break;
++#endif
+         case AUDIO_ES:
+             base = audio_codecs;
+             count = ARRAY_SIZE(audio_codecs);
+             break;
++#ifndef MUSICFREE_AUDIO_PROFILE
+         case SPU_ES:
+             base = spu_codecs;
+             count = ARRAY_SIZE(spu_codecs);
+             break;
++#endif
+         default:
+             base = NULL;
+             count = 0;
+@@ -593,6 +603,7 @@ bool GetFfmpegCodec( const es_format_t *es,
+ 
+ vlc_fourcc_t GetVlcFourcc( enum AVCodecID i_ffmpeg_codec )
+ {
++#ifndef MUSICFREE_AUDIO_PROFILE
+     if( i_ffmpeg_codec == AV_CODEC_ID_RAWVIDEO )
+         return VLC_CODEC_UNKNOWN;
+     for( size_t i = 0; i < ARRAY_SIZE(video_codecs); i++ )
+@@ -600,15 +611,16 @@ vlc_fourcc_t GetVlcFourcc( enum AVCodecID i_ffmpeg_codec )
+         if( video_codecs[i].i_codec == i_ffmpeg_codec )
+             return video_codecs[i].i_fourcc;
+     }
+-    for( size_t i = 0; i < ARRAY_SIZE(audio_codecs); i++ )
+-    {
+-        if( audio_codecs[i].i_codec == i_ffmpeg_codec )
+-            return audio_codecs[i].i_fourcc;
+-    }
+     for( size_t i = 0; i < ARRAY_SIZE(spu_codecs); i++ )
+     {
+         if( spu_codecs[i].i_codec == i_ffmpeg_codec )
+             return spu_codecs[i].i_fourcc;
+     }
++#endif
++    for( size_t i = 0; i < ARRAY_SIZE(audio_codecs); i++ )
++    {
++        if( audio_codecs[i].i_codec == i_ffmpeg_codec )
++            return audio_codecs[i].i_fourcc;
++    }
+     return VLC_CODEC_UNKNOWN;
+ }
+diff --git a/modules/demux/Makefile.am b/modules/demux/Makefile.am
+index 46ab71ee40..83f45d0d7c 100644
+--- a/modules/demux/Makefile.am
++++ b/modules/demux/Makefile.am
+@@ -229,7 +229,6 @@ libmp4_plugin_la_SOURCES = demux/mp4/mp4.c demux/mp4/mp4.h \
+                            demux/mp4/fragments.c demux/mp4/fragments.h \
+                            demux/mp4/attachments.c demux/mp4/attachments.h \
+                            demux/mp4/languages.h \
+-                           demux/mp4/heif.c demux/mp4/heif.h \
+                            demux/mp4/avci.h \
+                            demux/mp4/qt_palette.h \
+                            demux/mp4/essetup.c \
+diff --git a/modules/demux/avformat/demux.c b/modules/demux/avformat/demux.c
+index 5db4bc20bf..163acac1ab 100644
+--- a/modules/demux/avformat/demux.c
++++ b/modules/demux/avformat/demux.c
+@@ -39,19 +39,25 @@
+ #include <vlc_avcodec.h>
+ 
+ #include "../../codec/avcodec/avcodec.h"
++#ifndef MUSICFREE_AUDIO_PROFILE
+ #include "../../codec/avcodec/chroma.h"
++#endif
+ #include "../../codec/avcodec/avcommon_compat.h"
+ #include "avformat.h"
+ #include "../xiph.h"
++#ifndef MUSICFREE_AUDIO_PROFILE
+ #include "../vobsub.h"
+ #include "../av1_unpack.h"
++#endif
+ 
+ #include <libavformat/avformat.h>
++#ifndef MUSICFREE_AUDIO_PROFILE
+ #include <libavutil/display.h>
+ 
+ #if LIBAVUTIL_VERSION_CHECK( 57, 16, 100 )
+ # include <libavutil/dovi_meta.h>
+ #endif
++#endif
+ 
+ //#define AVFORMAT_DEBUG 1
+ 
+@@ -82,10 +88,12 @@ typedef struct
+ 
+     vlc_tick_t      i_pcr;
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     unsigned    i_ssa_order;
+ 
+-    int                i_attachments;
+-    input_attachment_t **attachments;
++   int                i_attachments;
++   input_attachment_t **attachments;
++#endif
+ 
+     /* Only one title with seekpoints possible atm. */
+     input_title_t *p_title;
+@@ -104,7 +112,9 @@ static int Control( demux_t *p_demux, int i_query, va_list args );
+ static int IORead( void *opaque, uint8_t *buf, int buf_size );
+ static int64_t IOSeek( void *opaque, int64_t offset, int whence );
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order );
++#endif
+ static void UpdateSeekPoint( demux_t *p_demux, vlc_tick_t i_time );
+ static void ResetTime( demux_t *p_demux, int64_t i_time );
+ 
+@@ -118,6 +128,7 @@ static vlc_fourcc_t CodecTagToFourcc( uint32_t codec_tag )
+ #endif
+ }
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static inline void* GetStreamSideData(const AVStream *s, enum AVPacketSideDataType type)
+ {
+ #if LIBAVCODEC_VERSION_CHECK( 60, 29, 100 )
+@@ -221,6 +232,7 @@ static void get_palette(es_format_t *fmt, const AVStream *s)
+         }
+     }
+ }
++#endif
+ 
+ static AVDictionary * BuildAVOptions( demux_t *p_demux )
+ {
+@@ -398,8 +410,10 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+     p_sys->fmt = fmt;
+     p_sys->tracks = NULL;
+     p_sys->i_tracks = 0;
++#ifndef MUSICFREE_AUDIO_PROFILE
+     p_sys->i_ssa_order = 0;
+     TAB_INIT( p_sys->i_attachments, p_sys->attachments);
++#endif
+     p_sys->p_title = NULL;
+     p_sys->i_seekpoint = 0;
+     p_sys->i_update = 0;
+@@ -512,6 +526,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+             }
+             break;
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+         case AVMEDIA_TYPE_VIDEO:
+             es_format_Init( &es_fmt, VIDEO_ES, fcc );
+             es_fmt.i_original_fourcc = CodecTagToFourcc( cp->codec_tag );
+@@ -588,8 +603,14 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+             }
+             psz_type = "subtitle";
+             break;
++#endif
+ 
+         default:
++#ifdef MUSICFREE_AUDIO_PROFILE
++            msg_Warn( p_demux, "unsupported non-audio track type (%u:%u) in avformat demux",
++                      cp->codec_type, cp->codec_id );
++            continue;
++#else
+             es_format_Init( &es_fmt, UNKNOWN_ES, 0 );
+             es_fmt.i_original_fourcc = CodecTagToFourcc( cp->codec_tag );
+             if( cp->codec_type == AVMEDIA_TYPE_ATTACHMENT )
+@@ -620,6 +641,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+                 msg_Warn( p_demux, "unsupported track type (%u:%u) in avformat demux", cp->codec_type, cp->codec_id );
+             }
+             break;
++#endif
+         }
+ 
+         AVDictionaryEntry *language = av_dict_get( s->metadata, "language", NULL, 0 );
+@@ -629,13 +651,18 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+         if( s->disposition & AV_DISPOSITION_DEFAULT )
+             es_fmt.i_priority = ES_PRIORITY_SELECTABLE_MIN + 1000;
+ 
++#ifdef MUSICFREE_AUDIO_PROFILE
++        if( cp->codec_type == AVMEDIA_TYPE_AUDIO )
++#else
+         if( cp->codec_type != AVMEDIA_TYPE_ATTACHMENT &&
+             cp->codec_type != AVMEDIA_TYPE_DATA )
++#endif
+         {
+             const bool    b_ogg = !strcmp( p_sys->fmt->name, "ogg" );
+             const uint8_t *p_extra = cp->extradata;
+             size_t i_extra = cp->extradata_size;
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+             if( cp->codec_id == AV_CODEC_ID_THEORA && b_ogg )
+             {
+                 size_t pi_size[3];
+@@ -682,7 +709,8 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+                     es_fmt.p_extra = NULL;
+                 }
+             }
+-            else if( cp->codec_id == AV_CODEC_ID_OPUS )
++#endif
++            if( cp->codec_id == AV_CODEC_ID_OPUS )
+             {
+                 const uint8_t p_dummy_comment[] = {
+                     'O', 'p', 'u', 's',
+@@ -717,11 +745,13 @@ int avformat_OpenDemux( vlc_object_t *p_this )
+                     memcpy( es_fmt.p_extra, p_extra, i_extra );
+                 }
+             }
++#ifndef MUSICFREE_AUDIO_PROFILE
+             else if ( cp->codec_id == AV_CODEC_ID_AV1 )
+             {
+                 // raw AV1, we need a packetizer to detect configuration changes
+                 es_fmt.b_packetized = false;
+             }
++#endif
+ 
+             es_fmt.i_id = i;
+             p_track->p_es = es_out_Add( p_demux->out, &es_fmt );
+@@ -796,9 +826,11 @@ void avformat_CloseDemux( vlc_object_t *p_this )
+         avformat_close_input( &p_sys->ic );
+     }
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     for( int i = 0; i < p_sys->i_attachments; i++ )
+         vlc_input_attachment_Release( p_sys->attachments[i] );
+     TAB_CLEAN( p_sys->i_attachments, p_sys->attachments);
++#endif
+ 
+     if( p_sys->p_title )
+         vlc_input_title_Delete( p_sys->p_title );
+@@ -833,6 +865,13 @@ static int Demux( demux_t *p_demux )
+     }
+     struct avformat_track_s *p_track = &p_sys->tracks[pkt.stream_index];
+     const AVStream *p_stream = p_sys->ic->streams[pkt.stream_index];
++#ifdef MUSICFREE_AUDIO_PROFILE
++    if( p_stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO )
++    {
++        av_packet_unref( &pkt );
++        return VLC_DEMUXER_SUCCESS;
++    }
++#endif
+     if( p_stream->time_base.den <= 0 )
+     {
+         msg_Warn( p_demux, "Invalid time base for the stream %d", pkt.stream_index );
+@@ -876,6 +915,7 @@ static int Demux( demux_t *p_demux )
+         }
+     }
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     if( p_stream->codecpar->codec_id == AV_CODEC_ID_SSA )
+     {
+         p_frame = BuildSsaFrame( &pkt, p_sys->i_ssa_order++ );
+@@ -898,6 +938,7 @@ static int Demux( demux_t *p_demux )
+         p_frame->p_buffer[p_frame->i_buffer - 1] = 0x3f;
+     }
+     else
++#endif
+     {
+         if( ( p_frame = block_Alloc( pkt.size ) ) == NULL )
+         {
+@@ -910,6 +951,7 @@ static int Demux( demux_t *p_demux )
+     if( pkt.flags & AV_PKT_FLAG_KEY )
+         p_frame->i_flags |= BLOCK_FLAG_TYPE_I;
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+     if( p_stream->codecpar->codec_id == AV_CODEC_ID_AV1 )
+     {
+         /* Prepare the packet like the mkv/mp4 demuxers do. */
+@@ -920,6 +962,7 @@ static int Demux( demux_t *p_demux )
+             return VLC_DEMUXER_EOF;
+         }
+     }
++#endif
+ 
+     /* Used to avoid timestamps overflow */
+     if( p_sys->ic->start_time != (int64_t)AV_NOPTS_VALUE )
+@@ -950,10 +993,12 @@ static int Demux( demux_t *p_demux )
+     /* Add here notoriously bugged file formats/samples */
+     if( !strcmp( p_sys->fmt->name, "flv" ) )
+     {
++#ifndef MUSICFREE_AUDIO_PROFILE
+         /* FLV and video PTS */
+         if( p_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+             pkt.dts != (int64_t)AV_NOPTS_VALUE && pkt.dts == pkt.pts )
+                 p_frame->i_pts = VLC_TICK_INVALID;
++#endif
+ 
+         /* Handle broken dts/pts increase with AAC. Duration is correct.
+          * sky_the80s_aacplus.flv #8195 */
+@@ -1048,6 +1093,7 @@ static void ResetTime( demux_t *p_demux, int64_t i_time )
+     }
+ }
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+ static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order )
+ {
+     if( p_pkt->size <= 0 )
+@@ -1081,6 +1127,7 @@ static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order )
+                              VLC_TICK_FROM_MS (c1-c0) / 100;
+     return p_frame;
+ }
++#endif
+ 
+ /*****************************************************************************
+  * Control:
+@@ -1228,6 +1275,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
+             return VLC_SUCCESS;
+         }
+ 
++#ifndef MUSICFREE_AUDIO_PROFILE
+         case DEMUX_GET_ATTACHMENTS:
+         {
+             input_attachment_t ***ppp_attach =
+@@ -1249,6 +1297,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
+             *pi_int = i;
+             return VLC_SUCCESS;
+         }
++#endif
+ 
+         case DEMUX_GET_TITLE_INFO:
+         {
+diff --git a/modules/demux/mp4/mp4.c b/modules/demux/mp4/mp4.c
+index ca961b8e96..698e1c988b 100644
+--- a/modules/demux/mp4/mp4.c
++++ b/modules/demux/mp4/mp4.c
+@@ -43,7 +43,6 @@
+ #include <math.h>
+ #include "meta.h"
+ #include "attachments.h"
+-#include "heif.h"
+ #include "../../codec/cc.h"
+ #include "../av1_unpack.h"
+ 
+@@ -62,11 +61,6 @@ static void Close( vlc_object_t * );
+ 
+ #define MP4_ELST_TEXT       N_("Handle edit list")
+ 
+-#define HEIF_DURATION_TEXT N_("Duration in seconds")
+-#define HEIF_DURATION_LONGTEXT N_( \
+-    "Duration in seconds before simulating an end of file. " \
+-    "A negative value means an unlimited play time.")
+-
+ vlc_module_begin ()
+     set_subcategory( SUBCAT_INPUT_DEMUX )
+     set_description( N_("MP4 stream demuxer") )
+@@ -83,16 +77,6 @@ vlc_module_begin ()
+     add_bool( CFG_PREFIX"m4a-audioonly", false, MP4_M4A_TEXT, MP4_M4A_LONGTEXT )
+     add_bool( CFG_PREFIX"editlist", true, MP4_ELST_TEXT, MP4_ELST_TEXT )
+ 
+-    add_submodule()
+-        set_subcategory( SUBCAT_INPUT_DEMUX )
+-        set_description( N_("HEIF demuxer") )
+-        set_shortname( "heif" )
+-        set_capability( "demux", 239 )
+-        set_callbacks( OpenHEIF, CloseHEIF )
+-        set_section( N_("HEIF demuxer"), NULL )
+-        add_float( "heif-image-duration", HEIF_DEFAULT_DURATION,
+-                   HEIF_DURATION_TEXT, HEIF_DURATION_LONGTEXT )
+-            change_safe()
+ vlc_module_end ()
+ 
+ /*****************************************************************************
+@@ -980,9 +964,6 @@ static void MP4_Block_Send( demux_t *p_demux, mp4_track_t *p_track, block_t *p_b
+         es_out_Send( p_demux->out, p_track->p_es, p_block );
+ }
+ 
+-int  OpenHEIF ( vlc_object_t * );
+-void CloseHEIF( vlc_object_t * );
+-
+ /*****************************************************************************
+  * Open: check file and initializes MP4 structures
+  *****************************************************************************/
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 9d93ba4df5..1ad2abb6da 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -287,8 +287,6 @@ libvlccore_la_SOURCES = \
+ 	clock/input_clock.c \
+ 	clock/clock.c \
+ 	input/decoder.c \
+-	input/decoder_prevframe.c \
+-	input/decoder_device.c \
+ 	input/decoder_helpers.c \
+ 	input/demux.c \
+ 	input/demux_chained.c \
+@@ -308,8 +306,6 @@ libvlccore_la_SOURCES = \
+ 	player/track.c \
+ 	player/title.c \
+ 	player/aout.c \
+-	player/vout.c \
+-	player/osd.c \
+ 	player/medialib.c \
+ 	player/metadata.c \
+ 	clock/input_clock.h \
+@@ -338,7 +334,6 @@ libvlccore_la_SOURCES = \
+ 	input/stream_extractor.c \
+ 	input/stream_filter.c \
+ 	input/stream_memory.c \
+-	input/subtitles.c \
+ 	input/var.c \
+ 	audio_output/aout_internal.h \
+ 	audio_output/common.c \
+@@ -347,32 +342,6 @@ libvlccore_la_SOURCES = \
+ 	audio_output/meter.c \
+ 	audio_output/output.c \
+ 	audio_output/volume.c \
+-	video_output/chrono.h \
+-	video_output/control.c \
+-	video_output/control.h \
+-	video_output/display.c \
+-	video_output/display.h \
+-	video_output/inhibit.c \
+-	video_output/inhibit.h \
+-	video_output/interlacing.c \
+-	video_output/snapshot.c \
+-	video_output/snapshot.h \
+-	video_output/statistic.h \
+-	video_output/video_output.c \
+-	video_output/video_text.c \
+-	video_output/video_epg.c \
+-	video_output/video_widgets.c \
+-	video_output/vout_subpictures.c \
+-	video_output/vout_spuregion_helper.h \
+-	video_output/vout_wrapper.h \
+-	video_output/video_window.c \
+-	video_output/video_window.h \
+-	video_output/window.c \
+-	video_output/opengl.c \
+-	video_output/vout_intf.c \
+-	video_output/vout_internal.h \
+-	video_output/vout_private.h \
+-	video_output/vout_wrapper.c \
+ 	network/getaddrinfo.c \
+ 	network/http_auth.c \
+ 	network/httpd.c \
+@@ -391,7 +360,6 @@ libvlccore_la_SOURCES = \
+ 	text/iso-639_def.h \
+ 	misc/actions.c \
+ 	misc/ancillary.c \
+-	misc/chroma_probe.c \
+ 	misc/executor.c \
+ 	misc/md5.c \
+ 	misc/probe.c \
+@@ -404,23 +372,16 @@ libvlccore_la_SOURCES = \
+ 	misc/fourcc_list.h \
+ 	misc/es_format.c \
+ 	misc/extensions.c \
+-	misc/picture.c \
+-	misc/picture.h \
+-	misc/picture_fifo.c \
+-	misc/picture_pool.c \
+ 	misc/interrupt.h \
+ 	misc/interrupt.c \
+ 	misc/keystore.c \
+ 	misc/rcu.h \
+ 	misc/rcu.c \
+-	misc/renderer_discovery.c \
+ 	misc/threads.c \
+ 	misc/threads.h \
+ 	misc/cpu.c \
+ 	misc/diffutil.c \
+-	misc/epg.c \
+ 	misc/exit.c \
+-	misc/image.c \
+ 	misc/messages.c \
+ 	misc/tracer.c \
+ 	misc/mime.c \
+@@ -431,16 +392,65 @@ libvlccore_la_SOURCES = \
+ 	misc/variables.c \
+ 	misc/xml.c \
+ 	misc/addons.c \
+-	misc/filter.c \
+-	misc/filter_chain.c \
+ 	misc/httpcookies.c \
+ 	misc/fingerprinter.c \
+-	misc/text_style.c \
+ 	misc/sort.c \
++	misc/medialibrary.c
++
++if !MUSICFREE_AUDIO_PROFILE
++libvlccore_la_SOURCES += \
++	input/decoder_prevframe.c \
++	input/decoder_device.c \
++	input/decoder_prevframe.h \
++	player/vout.c \
++	player/osd.c \
++	video_output/chrono.h \
++	video_output/control.c \
++	video_output/control.h \
++	video_output/display.c \
++	video_output/display.h \
++	video_output/inhibit.c \
++	video_output/inhibit.h \
++	video_output/interlacing.c \
++	video_output/snapshot.c \
++	video_output/snapshot.h \
++	video_output/statistic.h \
++	video_output/video_output.c \
++	video_output/video_text.c \
++	video_output/video_epg.c \
++	video_output/video_widgets.c \
++	video_output/vout_subpictures.c \
++	video_output/vout_spuregion_helper.h \
++	video_output/vout_wrapper.h \
++	video_output/video_window.c \
++	video_output/video_window.h \
++	video_output/window.c \
++	video_output/opengl.c \
++	video_output/vout_intf.c \
++	video_output/vout_internal.h \
++	video_output/vout_private.h \
++	video_output/vout_wrapper.c \
++	misc/picture_fifo.c \
++	misc/picture_pool.c \
++	misc/renderer_discovery.c \
++	misc/chroma_probe.c \
++	misc/epg.c \
++	misc/picture.c \
++	misc/picture.h \
++	misc/image.c \
++	misc/filter_chain.c \
++	input/subtitles.c \
++	misc/filter.c \
++	misc/text_style.c \
+ 	misc/subpicture.c \
+ 	misc/subpicture.h \
+-	misc/medialibrary.c \
+ 	misc/viewpoint.c
++else
++libvlccore_la_SOURCES += \
++	input/decoder_device.c \
++	input/decoder_prevframe.c \
++	musicfree_audio_compat.c
++endif
+ libvlccore_la_LIBADD = $(LIBS_libvlccore) \
+ 	../compat/libcompat.la \
+ 	$(LTLIBINTL) $(LTLIBICONV) \
+@@ -639,9 +649,15 @@ BUILT_SOURCES += fourcc_tables.h
+ EXTRA_DIST += misc/fourcc_gen.c
+ MOSTLYCLEANFILES = fourcc_gen$(BUILDEXEEXT)
+ 
++if MUSICFREE_AUDIO_PROFILE
++FOURCC_PROFILE_CFLAGS = -DMUSICFREE_AUDIO_PROFILE
++else
++FOURCC_PROFILE_CFLAGS =
++endif
++
+ fourcc_gen$(BUILDEXEEXT): misc/fourcc_gen.c misc/fourcc_list.h ../include/vlc_fourcc.h
+ 	$(AM_V_at)rm -f -- $@
+-	$(AM_V_CC)$(BUILDCC) -I$(srcdir) -o $@ $<
++	$(AM_V_CC)$(BUILDCC) $(FOURCC_PROFILE_CFLAGS) -I$(srcdir) -o $@ $<
+ 
+ fourcc_tables.h: fourcc_gen$(BUILDEXEEXT)
+ 	$(AM_V_at)rm -f -- $@.tmp
+diff --git a/src/misc/es_format.c b/src/misc/es_format.c
+index 0d4b65f758..94cea3c7fb 100644
+--- a/src/misc/es_format.c
++++ b/src/misc/es_format.c
+@@ -33,6 +33,7 @@
+ #include <vlc_common.h>
+ #include <vlc_es.h>
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ void video_format_Setup( video_format_t *p_fmt, vlc_fourcc_t i_chroma,
+                          int i_width, int i_height,
+                          int i_visible_width, int i_visible_height,
+@@ -297,6 +298,7 @@ void video_format_Print( vlc_object_t *p_this,
+              fmt->i_sar_num, fmt->i_sar_den,
+              orient );
+ }
++#endif
+ 
+ void es_format_Init( es_format_t *fmt,
+                      int i_cat, vlc_fourcc_t i_codec )
+@@ -312,18 +314,17 @@ void es_format_Init( es_format_t *fmt,
+     fmt->psz_description        = NULL;
+     fmt->p_extra_languages      = NULL;
+ 
+-    if (fmt->i_cat == VIDEO_ES)
+-        video_format_Init(&fmt->video, 0);
+-
+     fmt->b_packetized           = true;
+     fmt->p_extra                = NULL;
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+ void es_format_InitFromVideo( es_format_t *p_es, const video_format_t *p_fmt )
+ {
+     es_format_Init( p_es, VIDEO_ES, p_fmt->i_chroma );
+     video_format_Copy( &p_es->video, p_fmt );
+ }
++#endif
+ 
+ int es_format_Copy(es_format_t *restrict dst, const es_format_t *src)
+ {
+@@ -360,8 +361,10 @@ int es_format_Copy(es_format_t *restrict dst, const es_format_t *src)
+     else
+         dst->p_extra = NULL;
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     if (src->i_cat == VIDEO_ES)
+         ret = video_format_Copy( &dst->video, &src->video );
++#endif
+ 
+     if (src->i_cat == SPU_ES)
+     {
+@@ -405,8 +408,10 @@ void es_format_Clean(es_format_t *fmt)
+     assert(fmt->i_extra == 0 || fmt->p_extra != NULL);
+     free(fmt->p_extra);
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     if (fmt->i_cat == VIDEO_ES)
+         video_format_Clean( &fmt->video );
++#endif
+     if (fmt->i_cat == SPU_ES)
+         free(fmt->subs.psz_encoding);
+ 
+@@ -448,6 +453,7 @@ bool es_format_IsSimilar( const es_format_t *p_fmt1, const es_format_t *p_fmt2 )
+         return true;
+     }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     case VIDEO_ES:
+     {
+         video_format_t v1 = p_fmt1->video;
+@@ -460,6 +466,7 @@ bool es_format_IsSimilar( const es_format_t *p_fmt1, const es_format_t *p_fmt2 )
+             v2.i_chroma = vlc_fourcc_GetCodec( p_fmt2->i_cat, p_fmt2->i_codec );
+         return video_format_IsSimilar( &v1, &v2 );
+     }
++#endif
+ 
+     case SPU_ES:
+     default:
+@@ -508,6 +515,7 @@ void es_format_LogDifferences(struct vlc_logger *log,
+             vlc_debug(log, "'%s/%s' profile %d / %d", name_a, name_b, a->i_profile, b->i_profile);
+         break;
+     }
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     case VIDEO_ES:
+         if (a->i_profile != b->i_profile)
+             vlc_debug(log, "'%s/%s' profile %d / %d", name_a, name_b, a->i_profile, b->i_profile);
+@@ -519,6 +527,7 @@ void es_format_LogDifferences(struct vlc_logger *log,
+             vb.i_chroma = vlc_fourcc_GetCodec(b->i_cat, b->i_codec);
+         video_format_LogDifferences(log, name_a, &va, name_b, &vb);
+         break;
++#endif
+     default:
+         break;
+     }
+diff --git a/src/misc/fourcc.c b/src/misc/fourcc.c
+index ef61474511..08d36aebeb 100644
+--- a/src/misc/fourcc.c
++++ b/src/misc/fourcc.c
+@@ -71,43 +71,53 @@ static vlc_fourcc_t Lookup(vlc_fourcc_t fourcc, const char **restrict dsc,
+     return fourcc; /* Known FourCC (has a description) */
+ }
+ 
+-static vlc_fourcc_t LookupVideo(vlc_fourcc_t fourcc, const char **restrict dsc)
+-{
+-    return Lookup(fourcc, dsc, mapping_video, ARRAY_SIZE(mapping_video),
+-                  desc_video, ARRAY_SIZE(desc_video));
+-}
+-
+ static vlc_fourcc_t LookupAudio(vlc_fourcc_t fourcc, const char **restrict dsc)
+ {
+     return Lookup(fourcc, dsc, mapping_audio, ARRAY_SIZE(mapping_audio),
+                   desc_audio, ARRAY_SIZE(desc_audio));
+ }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
++static vlc_fourcc_t LookupVideo(vlc_fourcc_t fourcc, const char **restrict dsc)
++{
++    return Lookup(fourcc, dsc, mapping_video, ARRAY_SIZE(mapping_video),
++                  desc_video, ARRAY_SIZE(desc_video));
++}
++
+ static vlc_fourcc_t LookupSpu(vlc_fourcc_t fourcc, const char **restrict dsc)
+ {
+     return Lookup(fourcc, dsc, mapping_spu, ARRAY_SIZE(mapping_spu),
+                   desc_spu, ARRAY_SIZE(desc_spu));
+ }
++#endif
+ 
+ static vlc_fourcc_t LookupCat(vlc_fourcc_t fourcc, const char **restrict dsc,
+                               int cat)
+ {
+     switch (cat)
+     {
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         case VIDEO_ES:
+             return LookupVideo(fourcc, dsc);
++#endif
+         case AUDIO_ES:
+             return LookupAudio(fourcc, dsc);
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+         case SPU_ES:
+             return LookupSpu(fourcc, dsc);
++#endif
+     }
+ 
++#if !defined(MUSICFREE_AUDIO_PROFILE)
+     vlc_fourcc_t ret = LookupVideo(fourcc, dsc);
+     if (!ret)
+         ret = LookupAudio(fourcc, dsc);
+     if (!ret)
+         ret = LookupSpu(fourcc, dsc);
+     return ret;
++#else
++    return LookupAudio(fourcc, dsc);
++#endif
+ }
+ 
+ vlc_fourcc_t vlc_fourcc_GetCodec(int cat, vlc_fourcc_t fourcc)
+diff --git a/src/misc/fourcc_gen.c b/src/misc/fourcc_gen.c
+index 5f91783690..97a0c7bca1 100644
+--- a/src/misc/fourcc_gen.c
++++ b/src/misc/fourcc_gen.c
+@@ -147,8 +147,12 @@ int main(void)
+ #define p(t) \
+     process_list(#t, p_list_##t, \
+                  sizeof (p_list_##t) / sizeof ((p_list_##t)[0]))
++#ifndef MUSICFREE_AUDIO_PROFILE
+     p(video);
++#endif
+     p(audio);
++#ifndef MUSICFREE_AUDIO_PROFILE
+     p(spu);
++#endif
+     return 0;
+ }
+diff --git a/src/musicfree_audio_compat.c b/src/musicfree_audio_compat.c
+new file mode 100644
+index 0000000000..5027c7bc7a
+--- /dev/null
++++ b/src/musicfree_audio_compat.c
+@@ -0,0 +1,797 @@
++/*
++ * Audio-profile compatibility layer.
++ *
++ * The normal libVLC core shares a number of video-oriented control paths with
++ * audio playback. The audio profile removes the video output implementation,
++ * so these entry points deliberately fail closed or discard video data.
++ */
++
++#ifdef HAVE_CONFIG_H
++# include "config.h"
++#endif
++
++#include <stdarg.h>
++#include <stddef.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <vlc_common.h>
++#include <vlc_atomic.h>
++#include <vlc_epg.h>
++#include <vlc_filter.h>
++#include <vlc_modules.h>
++#include <vlc_objects.h>
++#include <vlc_picture.h>
++#include <vlc_picture_pool.h>
++#include <vlc_renderer_discovery.h>
++#include <vlc_subpicture.h>
++#include <vlc_vout.h>
++#include <vlc_vout_osd.h>
++#include <vlc_es.h>
++
++#include "input/resource.h"
++#include "player/player.h"
++#include "video_output/vout_internal.h"
++#include "misc/variables.h"
++
++typedef struct
++{
++    vout_thread_t obj;
++    vlc_atomic_rc_t refs;
++} musicfree_audio_vout_t;
++
++static musicfree_audio_vout_t *musicfree_audio_vout_new(vlc_object_t *parent)
++{
++    musicfree_audio_vout_t *vout = vlc_custom_create(parent, sizeof(*vout),
++                                                      "video output");
++    if (vout != NULL)
++        vlc_atomic_rc_init(&vout->refs);
++    return vout;
++}
++
++vout_thread_t *vout_CreateDummy(vlc_object_t *parent)
++{
++    musicfree_audio_vout_t *vout = musicfree_audio_vout_new(parent);
++    return vout != NULL ? &vout->obj : NULL;
++}
++
++vout_thread_t *vout_Create(vlc_object_t *parent)
++{
++    return vout_CreateDummy(parent);
++}
++
++vout_thread_t *vout_Hold(vout_thread_t *vout)
++{
++    if (vout != NULL)
++        vlc_atomic_rc_inc(&((musicfree_audio_vout_t *)vout)->refs);
++    return vout;
++}
++
++void vout_Release(vout_thread_t *vout)
++{
++    if (vout == NULL)
++        return;
++
++    musicfree_audio_vout_t *state = (musicfree_audio_vout_t *)vout;
++    if (vlc_atomic_rc_dec(&state->refs))
++        vlc_object_delete(vout);
++}
++
++void vout_Close(vout_thread_t *vout)
++{
++    vout_Stop(vout);
++    vout_Release(vout);
++}
++
++void vout_Stop(vout_thread_t *vout)
++{
++    VLC_UNUSED(vout);
++}
++
++void vout_StopDisplay(vout_thread_t *vout)
++{
++    VLC_UNUSED(vout);
++}
++
++int vout_Request(const vout_configuration_t *cfg, vlc_video_context *vctx,
++                 input_thread_t *input)
++{
++    VLC_UNUSED(cfg);
++    VLC_UNUSED(vctx);
++    VLC_UNUSED(input);
++    return VLC_EGENERIC;
++}
++
++int vout_ChangeSource(vout_thread_t *vout, const video_format_t *fmt,
++                      const vlc_video_context *vctx)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(vctx);
++    return VLC_EGENERIC;
++}
++
++vlc_decoder_device *vout_GetDevice(vout_thread_t *vout)
++{
++    VLC_UNUSED(vout);
++    return NULL;
++}
++
++void vout_ChangePause(vout_thread_t *vout, bool paused, vlc_tick_t date)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(paused);
++    VLC_UNUSED(date);
++}
++
++void vout_ChangeRate(vout_thread_t *vout, float rate)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(rate);
++}
++
++void vout_ChangeDelay(vout_thread_t *vout, vlc_tick_t delay)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(delay);
++}
++
++void vout_ChangeSpuRate(vout_thread_t *vout, size_t channel_id, float rate)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel_id);
++    VLC_UNUSED(rate);
++}
++
++void vout_ChangeSpuDelay(vout_thread_t *vout, size_t channel_id,
++                         vlc_tick_t delay)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel_id);
++    VLC_UNUSED(delay);
++}
++
++void vout_GetResetStatistic(vout_thread_t *vout, unsigned *displayed,
++                            unsigned *lost, unsigned *late)
++{
++    VLC_UNUSED(vout);
++    if (displayed != NULL)
++        *displayed = 0;
++    if (lost != NULL)
++        *lost = 0;
++    if (late != NULL)
++        *late = 0;
++}
++
++size_t vout_NextPicture(vout_thread_t *vout, size_t request_frame_count)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(request_frame_count);
++    return 0;
++}
++
++void vout_DisplayTitle(vout_thread_t *vout, const char *title)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(title);
++}
++
++bool vout_IsEmpty(vout_thread_t *vout)
++{
++    VLC_UNUSED(vout);
++    return true;
++}
++
++void vout_SetSpuHighlight(vout_thread_t *vout,
++                          const vlc_spu_highlight_t *highlight)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(highlight);
++}
++
++void vout_PutPicture(vout_thread_t *vout, picture_t *picture)
++{
++    VLC_UNUSED(vout);
++    if (picture != NULL)
++        picture_Release(picture);
++}
++
++void vout_PutSubpicture(vout_thread_t *vout, subpicture_t *subpicture)
++{
++    VLC_UNUSED(vout);
++    if (subpicture != NULL)
++        subpicture_Delete(subpicture);
++}
++
++ssize_t vout_RegisterSubpictureChannel(vout_thread_t *vout)
++{
++    VLC_UNUSED(vout);
++    return VOUT_SPU_CHANNEL_INVALID;
++}
++
++ssize_t vout_RegisterSubpictureChannelInternal(vout_thread_t *vout,
++                                                vlc_clock_t *clock,
++                                                enum vlc_vout_order *order)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(clock);
++    VLC_UNUSED(order);
++    return VOUT_SPU_CHANNEL_INVALID;
++}
++
++void vout_UnregisterSubpictureChannel(vout_thread_t *vout, size_t channel)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++}
++
++void vout_FlushSubpictureChannel(vout_thread_t *vout, size_t channel)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++}
++
++vlc_tick_t vout_Flush(vout_thread_t *vout, vlc_tick_t date)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(date);
++    return VLC_TICK_INVALID;
++}
++
++int vout_GetSnapshot(vout_thread_t *vout, block_t **image_dst,
++                     picture_t **picture_dst, video_format_t *fmt,
++                     const char *type, vlc_tick_t timeout)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(type);
++    VLC_UNUSED(timeout);
++    if (image_dst != NULL)
++        *image_dst = NULL;
++    if (picture_dst != NULL)
++        *picture_dst = NULL;
++    return VLC_EGENERIC;
++}
++
++void vout_OSDText(vout_thread_t *vout, int channel, int position,
++                  vlc_tick_t duration, const char *text)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++    VLC_UNUSED(position);
++    VLC_UNUSED(duration);
++    VLC_UNUSED(text);
++}
++
++void vout_OSDMessageVa(vout_thread_t *vout, int channel, const char *format,
++                       va_list args)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++    VLC_UNUSED(format);
++    VLC_UNUSED(args);
++}
++
++void vout_OSDSlider(vout_thread_t *vout, int channel, int position,
++                    vlc_osd_widget_type type)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++    VLC_UNUSED(position);
++    VLC_UNUSED(type);
++}
++
++void vout_OSDIcon(vout_thread_t *vout, int channel, vlc_osd_widget_type type)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(channel);
++    VLC_UNUSED(type);
++}
++
++int vout_OSDEpg(vout_thread_t *vout, input_item_t *input)
++{
++    VLC_UNUSED(vout);
++    VLC_UNUSED(input);
++    return VLC_EGENERIC;
++}
++
++void vlc_player_vout_AddCallbacks(vlc_player_t *player, vout_thread_t *vout)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(vout);
++}
++
++void vlc_player_vout_DelCallbacks(vlc_player_t *player, vout_thread_t *vout)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(vout);
++}
++
++vout_thread_t *vlc_player_vout_Hold(vlc_player_t *player)
++{
++    if (player == NULL || player->resource == NULL)
++        return NULL;
++    return input_resource_HoldDummyVout(player->resource);
++}
++
++vout_thread_t **vlc_player_vout_HoldAll(vlc_player_t *player, size_t *count)
++{
++    if (count == NULL)
++        return NULL;
++    *count = 0;
++
++    vout_thread_t *vout = vlc_player_vout_Hold(player);
++    if (vout == NULL)
++        return NULL;
++
++    vout_thread_t **vouts = malloc(sizeof(*vouts));
++    if (vouts == NULL)
++    {
++        vout_Release(vout);
++        return NULL;
++    }
++    vouts[0] = vout;
++    *count = 1;
++    return vouts;
++}
++
++vlc_player_vout_listener_id *
++vlc_player_vout_AddListener(vlc_player_t *player,
++                            const struct vlc_player_vout_cbs *cbs,
++                            void *cbs_data)
++{
++    if (player == NULL || cbs == NULL)
++        return NULL;
++
++    vlc_player_vout_listener_id *listener = malloc(sizeof(*listener));
++    if (listener == NULL)
++        return NULL;
++    listener->cbs = cbs;
++    listener->cbs_data = cbs_data;
++    vlc_mutex_lock(&player->vout_listeners_lock);
++    vlc_list_append(&listener->node, &player->vout_listeners);
++    vlc_mutex_unlock(&player->vout_listeners_lock);
++    return listener;
++}
++
++void vlc_player_vout_RemoveListener(vlc_player_t *player,
++                                    vlc_player_vout_listener_id *listener)
++{
++    if (player == NULL || listener == NULL)
++        return;
++    vlc_mutex_lock(&player->vout_listeners_lock);
++    vlc_list_remove(&listener->node);
++    vlc_mutex_unlock(&player->vout_listeners_lock);
++    free(listener);
++}
++
++bool vlc_player_vout_IsFullscreen(vlc_player_t *player)
++{
++    VLC_UNUSED(player);
++    return false;
++}
++
++void vlc_player_vout_SetFullscreen(vlc_player_t *player, bool enabled)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(enabled);
++}
++
++bool vlc_player_vout_IsWallpaperModeEnabled(vlc_player_t *player)
++{
++    VLC_UNUSED(player);
++    return false;
++}
++
++void vlc_player_vout_SetWallpaperModeEnabled(vlc_player_t *player, bool enabled)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(enabled);
++}
++
++void vlc_player_vout_Snapshot(vlc_player_t *player)
++{
++    VLC_UNUSED(player);
++}
++
++int vlc_player_vout_OSDCallback(vlc_object_t *this, const char *var,
++                                vlc_value_t oldval, vlc_value_t newval,
++                                void *data)
++{
++    VLC_UNUSED(this);
++    VLC_UNUSED(var);
++    VLC_UNUSED(oldval);
++    VLC_UNUSED(newval);
++    VLC_UNUSED(data);
++    return VLC_SUCCESS;
++}
++
++void vlc_player_osd_Message(vlc_player_t *player, const char *fmt, ...)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(fmt);
++}
++
++void vlc_player_osd_Icon(vlc_player_t *player, vlc_osd_widget_type type)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(type);
++}
++
++void vlc_player_osd_Position(vlc_player_t *player,
++                             struct vlc_player_input *input,
++                             vlc_tick_t time, double position)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(input);
++    VLC_UNUSED(time);
++    VLC_UNUSED(position);
++}
++
++void vlc_player_osd_Volume(vlc_player_t *player, bool mute_action)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(mute_action);
++}
++
++void vlc_player_osd_Track(vlc_player_t *player, vlc_es_id_t *id, bool select)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(id);
++    VLC_UNUSED(select);
++}
++
++void vlc_player_osd_Tracks(vlc_player_t *player,
++                           vlc_es_id_t *const *selected,
++                           vlc_es_id_t *unselect)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(selected);
++    VLC_UNUSED(unselect);
++}
++
++void vlc_player_osd_Program(vlc_player_t *player, const char *name)
++{
++    VLC_UNUSED(player);
++    VLC_UNUSED(name);
++}
++
++void vlc_filter_UnloadModule(filter_t *filter)
++{
++    if (filter == NULL)
++        return;
++
++    if (filter->p_module != NULL)
++    {
++        if (filter->ops != NULL && filter->ops->close != NULL)
++            filter->ops->close(filter);
++        var_Destroy(filter, "module-name");
++        filter->p_module = NULL;
++    }
++    vlc_objres_clear(&filter->obj);
++}
++
++void picture_Destroy(picture_t *picture)
++{
++    VLC_UNUSED(picture);
++}
++
++void picture_Reset(picture_t *picture)
++{
++    VLC_UNUSED(picture);
++}
++
++picture_t *picture_New(vlc_fourcc_t chroma, int width, int height,
++                       int sar_num, int sar_den)
++{
++    VLC_UNUSED(chroma);
++    VLC_UNUSED(width);
++    VLC_UNUSED(height);
++    VLC_UNUSED(sar_num);
++    VLC_UNUSED(sar_den);
++    return NULL;
++}
++
++picture_t *picture_NewFromFormat(const video_format_t *fmt)
++{
++    VLC_UNUSED(fmt);
++    return NULL;
++}
++
++picture_t *picture_NewFromResource(const video_format_t *fmt,
++                                    const picture_resource_t *resource)
++{
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(resource);
++    return NULL;
++}
++
++void picture_CopyProperties(picture_t *dst, const picture_t *src)
++{
++    VLC_UNUSED(dst);
++    VLC_UNUSED(src);
++}
++
++void picture_CopyPixels(picture_t *dst, const picture_t *src)
++{
++    VLC_UNUSED(dst);
++    VLC_UNUSED(src);
++}
++
++void picture_Copy(picture_t *dst, const picture_t *src)
++{
++    VLC_UNUSED(dst);
++    VLC_UNUSED(src);
++}
++
++picture_t *picture_Clone(picture_t *picture)
++{
++    VLC_UNUSED(picture);
++    return NULL;
++}
++
++int picture_Export(vlc_object_t *obj, block_t **image, video_format_t *fmt,
++                  picture_t *picture, vlc_fourcc_t codec, int width,
++                  int height, bool crop)
++{
++    VLC_UNUSED(obj);
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(picture);
++    VLC_UNUSED(codec);
++    VLC_UNUSED(width);
++    VLC_UNUSED(height);
++    VLC_UNUSED(crop);
++    if (image != NULL)
++        *image = NULL;
++    return VLC_EGENERIC;
++}
++
++int picture_Setup(picture_t *picture, const video_format_t *fmt)
++{
++    VLC_UNUSED(picture);
++    VLC_UNUSED(fmt);
++    return VLC_EGENERIC;
++}
++
++picture_pool_t *picture_pool_New(unsigned count, picture_t *const *pictures)
++{
++    VLC_UNUSED(count);
++    VLC_UNUSED(pictures);
++    return NULL;
++}
++
++picture_pool_t *picture_pool_NewFromFormat(const video_format_t *fmt,
++                                           unsigned count)
++{
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(count);
++    return NULL;
++}
++
++void picture_pool_Release(picture_pool_t *pool)
++{
++    VLC_UNUSED(pool);
++}
++
++picture_t *picture_pool_Get(picture_pool_t *pool)
++{
++    VLC_UNUSED(pool);
++    return NULL;
++}
++
++picture_t *picture_pool_Wait(picture_pool_t *pool)
++{
++    VLC_UNUSED(pool);
++    return NULL;
++}
++
++subpicture_t *subpicture_New(const subpicture_updater_t *updater)
++{
++    VLC_UNUSED(updater);
++    return NULL;
++}
++
++void subpicture_Delete(subpicture_t *subpicture)
++{
++    VLC_UNUSED(subpicture);
++}
++
++subpicture_t *subpicture_NewFromPicture(vlc_object_t *obj,
++                                         picture_t *picture,
++                                         vlc_fourcc_t chroma)
++{
++    VLC_UNUSED(obj);
++    VLC_UNUSED(picture);
++    VLC_UNUSED(chroma);
++    return NULL;
++}
++
++void subpicture_Update(subpicture_t *subpicture, const video_format_t *src,
++                       const video_format_t *dst, unsigned display_width,
++                       unsigned display_height, vlc_tick_t timestamp)
++{
++    VLC_UNUSED(subpicture);
++    VLC_UNUSED(src);
++    VLC_UNUSED(dst);
++    VLC_UNUSED(display_width);
++    VLC_UNUSED(display_height);
++    VLC_UNUSED(timestamp);
++}
++
++unsigned picture_BlendSubpicture(picture_t *picture, vlc_blender_t *blender,
++                                 vlc_render_subpicture *subpicture)
++{
++    VLC_UNUSED(picture);
++    VLC_UNUSED(blender);
++    VLC_UNUSED(subpicture);
++    return 0;
++}
++
++vlc_render_subpicture *vlc_render_subpicture_New(void)
++{
++    return NULL;
++}
++
++void vlc_render_subpicture_Delete(vlc_render_subpicture *subpicture)
++{
++    VLC_UNUSED(subpicture);
++}
++
++void video_format_TransformBy(video_format_t *fmt, video_transform_t transform)
++{
++    VLC_UNUSED(fmt);
++    VLC_UNUSED(transform);
++}
++
++void vlc_viewpoint_to_4x4(const vlc_viewpoint_t *viewpoint, float *matrix)
++{
++    VLC_UNUSED(viewpoint);
++    if (matrix == NULL)
++        return;
++    memset(matrix, 0, 16 * sizeof(*matrix));
++    matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.f;
++}
++
++void vlc_viewpoint_from_euler(vlc_viewpoint_t *viewpoint, float yaw,
++                              float pitch, float roll)
++{
++    if (viewpoint == NULL)
++        return;
++    viewpoint->yaw = yaw;
++    viewpoint->pitch = pitch;
++    viewpoint->roll = roll;
++}
++
++void vlc_viewpoint_to_euler(const vlc_viewpoint_t *viewpoint, float *yaw,
++                            float *pitch, float *roll)
++{
++    if (viewpoint == NULL)
++        return;
++    if (yaw != NULL)
++        *yaw = viewpoint->yaw;
++    if (pitch != NULL)
++        *pitch = viewpoint->pitch;
++    if (roll != NULL)
++        *roll = viewpoint->roll;
++}
++
++int subtitles_Detect(input_thread_t *input, char *path, const char *name,
++                     input_item_slave_t ***slaves, int *count)
++{
++    VLC_UNUSED(input);
++    VLC_UNUSED(path);
++    VLC_UNUSED(name);
++    VLC_UNUSED(slaves);
++    VLC_UNUSED(count);
++    return VLC_EGENERIC;
++}
++
++int subtitles_Filter(const char *name)
++{
++    VLC_UNUSED(name);
++    return VLC_EGENERIC;
++}
++
++vlc_renderer_item_t *vlc_renderer_item_new(const char *type, const char *name,
++                                            const char *uri,
++                                            const char *extra_sout,
++                                            const char *demux_filter,
++                                            const char *icon_uri, int flags)
++{
++    VLC_UNUSED(type);
++    VLC_UNUSED(name);
++    VLC_UNUSED(uri);
++    VLC_UNUSED(extra_sout);
++    VLC_UNUSED(demux_filter);
++    VLC_UNUSED(icon_uri);
++    VLC_UNUSED(flags);
++    return NULL;
++}
++
++vlc_renderer_item_t *vlc_renderer_item_hold(vlc_renderer_item_t *item)
++{
++    return item;
++}
++
++void vlc_renderer_item_release(vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++}
++
++const char *vlc_renderer_item_name(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return NULL;
++}
++
++const char *vlc_renderer_item_type(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return NULL;
++}
++
++const char *vlc_renderer_item_demux_filter(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return NULL;
++}
++
++const char *vlc_renderer_item_sout(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return NULL;
++}
++
++const char *vlc_renderer_item_icon_uri(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return NULL;
++}
++
++int vlc_renderer_item_flags(const vlc_renderer_item_t *item)
++{
++    VLC_UNUSED(item);
++    return 0;
++}
++
++void vlc_epg_event_Delete(vlc_epg_event_t *event)
++{
++    VLC_UNUSED(event);
++}
++
++vlc_epg_event_t *vlc_epg_event_Duplicate(const vlc_epg_event_t *event)
++{
++    VLC_UNUSED(event);
++    return NULL;
++}
++
++vlc_epg_t *vlc_epg_New(uint32_t id, uint16_t source_id)
++{
++    VLC_UNUSED(id);
++    VLC_UNUSED(source_id);
++    return NULL;
++}
++
++void vlc_epg_Delete(vlc_epg_t *epg)
++{
++    VLC_UNUSED(epg);
++}
++
++bool vlc_epg_AddEvent(vlc_epg_t *epg, vlc_epg_event_t *event)
++{
++    VLC_UNUSED(epg);
++    VLC_UNUSED(event);
++    return false;
++}
++
++void vlc_epg_SetCurrent(vlc_epg_t *epg, int64_t start)
++{
++    VLC_UNUSED(epg);
++    VLC_UNUSED(start);
++}
++
++vlc_epg_t *vlc_epg_Duplicate(const vlc_epg_t *epg)
++{
++    VLC_UNUSED(epg);
++    return NULL;
++}
+-- 
+2.50.1 (Apple Git-155)
+

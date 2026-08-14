@@ -1,0 +1,56 @@
+profile: musicfree-audio-ios
+deployment_target: "26.0"
+platforms:
+  - ios-device-arm64
+  - ios-simulator-arm64
+  - ios-simulator-x86_64
+local:
+  - file
+network:
+  - http
+  - https
+  - ftp
+  - ftps
+  - ftpes
+  - smb2
+  - nfs
+audio_formats:
+  - mp3
+  - aac
+  - he-aac
+  - alac
+  - flac
+  - opus
+  - vorbis
+  - wav
+  - pcm
+  - aiff
+  - ape
+  - wavpack
+  - musepack
+audio_processing:
+  - taglib
+  - embedded-artwork
+  - soxr
+  - equalizer
+  - ios-audiounit
+  - ios-avsamplebuffer
+explicitly_out_of_scope:
+  - video
+  - subtitles
+  - fonts
+  - visualizations
+  - hls
+  - dash
+  - rtsp
+  - rtp
+  - udp
+  - srt
+  - rist
+  - sftp
+  - discovery
+  - directory-browsing
+  - sout
+  - encoders
+  - muxers
+  - lua

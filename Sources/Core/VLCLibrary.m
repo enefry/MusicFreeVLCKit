@@ -197,7 +197,6 @@ static id<VLCEventsConfiguring> _sharedEventsConfiguration = nil;
                       @"--avcodec-fast",
 #endif
 #endif
-                      @"--text-renderer=freetype",
                       @"--avi-index=3",
                       @"--audio-resampler=soxr"];
     }

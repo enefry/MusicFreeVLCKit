@@ -27,7 +27,11 @@
 
 #import <Foundation/Foundation.h>
 
-@class VLCTime, VLCMediaTrack, VLCMediaMetaData, VLCMediaSlave;
+#ifndef MUSICFREE_AUDIO_PROFILE
+#define MUSICFREE_AUDIO_PROFILE 1
+#endif
+
+@class VLCTime, VLCMediaTrack, VLCMediaMetaData;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -114,8 +118,10 @@ OBJC_VISIBLE
 typedef NS_ENUM(NSInteger, VLCMediaTrackType) {
     VLCMediaTrackTypeUnknown    = -1,
     VLCMediaTrackTypeAudio      = 0,
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     VLCMediaTrackTypeVideo      = 1,
     VLCMediaTrackTypeText       = 2
+#endif
 } NS_SWIFT_NAME(VLCMedia.TrackType);
 
 /**
@@ -173,6 +179,7 @@ typedef NS_ENUM(NSInteger, VLCMediaTrackType) {
 /**
  * list of possible media orientation.
  */
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 typedef NS_ENUM(NSUInteger, VLCMediaOrientation) {
     VLCMediaOrientationTopLeft,
     VLCMediaOrientationTopRight,
@@ -192,6 +199,7 @@ typedef NS_ENUM(NSUInteger, VLCMediaProjection) {
     VLCMediaProjectionEquiRectangular,
     VLCMediaProjectionCubemapLayoutStandard = 0x100
 };
+#endif
 
 /**
  * list of possible media types that could be returned by "mediaType"
@@ -328,24 +336,6 @@ typedef NS_OPTIONS(unsigned, VLCMediaOption) {
 - (void)addOption:(NSString *)option withFlags:(VLCMediaOption)flags;
 
 /**
- * the external slaves (subtitle or audio) of the media, parsed by VLC or added via -addSlave:
- */
-@property (nonatomic, readonly, copy) NSArray<VLCMediaSlave *> *slaves;
-
-/**
- * Add an external slave (e.g. a subtitle or additional audio track) to the media.
- * \note must be called before the media is parsed or played
- * \param slave the slave to add
- * \return YES on success
- */
-- (BOOL)addSlave:(VLCMediaSlave *)slave;
-
-/**
- * Remove all slaves previously added with -addSlave: or parsed by VLC.
- */
-- (void)clearSlaves;
-
-/**
  * Parse a value of an incoming Set-Cookie header (see RFC 6265) and append the
  * cookie to the stored cookies if appropriate. The "secure" attribute can be added
  * to cookie to limit the scope of the cookie to secured channels (https).
@@ -387,12 +377,16 @@ struct VLCMediaStats
     const uint64_t         demuxCorrupted;
     const uint64_t         demuxDiscontinuity;
     /* Decoders */
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     const uint64_t         decodedVideo;
+#endif
     const uint64_t         decodedAudio;
+#if !defined(MUSICFREE_AUDIO_PROFILE)
     /* Video Output */
     const uint64_t         displayedPictures;
     const uint64_t         latePictures;
     const uint64_t         lostPictures;
+#endif
     /* Audio output */
     const uint64_t         playedAudioBuffers;
     const uint64_t         lostAudioBuffers;
@@ -411,11 +405,7 @@ typedef struct VLCMediaStats VLCMediaStats;
 ///   value is 0 on non-stream-output operations.
 ///   - demuxDiscontinuity: the total number of discontinuties during current sout session.
 ///   value is 0 on non-stream-output operations.
-///   - decodedVideo: the total number of decoded video blocks in the current media session.
 ///   - decodedAudio: the total number of decoded audio blocks in the current media session.
-///   - displayedPictures: the total number of displayed pictures during the current media session.
-///   - latePictures: the total number of pictures late during the current media session.
-///   - lostPictures: the total number of pictures lost during the current media session.
 ///   - playedAudioBuffers: the total number of played audio buffers during the current media session.
 ///   - lostAudioBuffers: the total number of audio buffers lost during the current media session.
 @property (nonatomic, readonly) VLCMediaStats statistics;
@@ -431,6 +421,7 @@ typedef struct VLCMediaStats VLCMediaStats;
  */
 @property(nonatomic, readonly, copy) NSArray<VLCMediaTrack *> *audioTracks;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * videoTracks
  */
@@ -440,6 +431,7 @@ typedef struct VLCMediaStats VLCMediaStats;
  * textTracks
  */
 @property(nonatomic, readonly, copy) NSArray<VLCMediaTrack *> *textTracks;
+#endif
 
 @end
 
@@ -468,6 +460,7 @@ NS_SWIFT_NAME(VLCMedia.AudioTrack)
 @end
 
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * VLCMediaVideoTrack
  */
@@ -537,6 +530,7 @@ NS_SWIFT_NAME(VLCMedia.TextTrack)
 - (instancetype)init NS_UNAVAILABLE;
 
 @end
+#endif
 
 
 /**
@@ -595,6 +589,7 @@ NS_SWIFT_NAME(VLCMedia.Track)
  */
 @property(nonatomic, readonly, nullable) VLCMediaAudioTrack *audio;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /**
  * VLCMediaVideoTrack
  */
@@ -604,6 +599,7 @@ NS_SWIFT_NAME(VLCMedia.Track)
  * VLCMediaTextTrack
  */
 @property(nonatomic, readonly, nullable) VLCMediaTextTrack *text;
+#endif
 
 /**
  * user readable codec name

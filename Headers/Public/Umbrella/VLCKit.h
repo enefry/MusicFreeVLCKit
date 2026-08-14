@@ -24,82 +24,40 @@
 
 #include <TargetConditionals.h>
 
+// This distribution is the audio-only VLCKit profile. Keep the profile
+// active when a consumer imports an individual public header directly.
+#ifndef MUSICFREE_AUDIO_PROFILE
+#define MUSICFREE_AUDIO_PROFILE 1
+#endif
+
 #import <VLCKit/VLCAudio.h>
 #import <VLCKit/VLCLibrary.h>
 #import <VLCKit/VLCMedia.h>
-#import <VLCKit/VLCMediaSlave.h>
-#import <VLCKit/VLCMediaDiscoverer.h>
 #import <VLCKit/VLCMediaList.h>
 #import <VLCKit/VLCMediaPlayer.h>
 #import <VLCKit/VLCAudioEqualizer.h>
-#import <VLCKit/VLCMediaListPlayer.h>
-#import <VLCKit/VLCMediaThumbnailer.h>
 #import <VLCKit/VLCMediaParser.h>
-#import <VLCKit/VLCMediaDownloader.h>
 #import <VLCKit/VLCMediaMetaData.h>
 #import <VLCKit/VLCTime.h>
-#import <VLCKit/VLCFilter.h>
-#import <VLCKit/VLCAdjustFilter.h>
 #import <VLCKit/VLCLogging.h>
 #import <VLCKit/VLCConsoleLogger.h>
 #import <VLCKit/VLCFileLogger.h>
 #import <VLCKit/VLCLogMessageFormatter.h>
 #import <VLCKit/VLCEventsConfiguration.h>
 #import <VLCKit/VLCMediaPlayerTitleDescription.h>
-#if !TARGET_OS_WATCH
-#import <VLCKit/VLCDrawable.h>
-#import <VLCKit/VLCDialogProvider.h>
-#endif
-
-#if TARGET_OS_OSX
-#import <VLCKit/VLCTranscoder.h>
-#import <VLCKit/VLCStreamOutput.h>
-#import <VLCKit/VLCStreamSession.h>
-#import <VLCKit/VLCVideoLayer.h>
-#import <VLCKit/VLCVideoView.h>
-#import <VLCKit/VLCRendererDiscoverer.h>
-#import <VLCKit/VLCRendererItem.h>
-#endif
-#if TARGET_OS_IOS
-#import <VLCKit/VLCTranscoder.h>
-#import <VLCKit/VLCRendererDiscoverer.h>
-#import <VLCKit/VLCRendererItem.h>
-#endif
-
 @class VLCMedia;
 @class VLCMediaList;
 @class VLCTime;
 @class VLCAudio;
-@class VLCMediaThumbnailer;
 @class VLCMediaParser;
 @class VLCMediaListPlayer;
 @class VLCMediaPlayer;
 @class VLCAudioEqualizer;
 @class VLCAudioEqualizerPreset;
 @class VLCAudioEqualizerBand;
-#if !TARGET_OS_WATCH
-@class VLCDialogProvider;
-#endif
-@class VLCRendererDiscoverer;
-@class VLCRendererDiscovererDescription;
-@class VLCRendererItem;
-@class VLCFilterParameter;
-@class VLCAdjustFilter;
 @class VLCMediaMetaData;
 @class VLCConsoleLogger;
 @class VLCFileLogger;
 @class VLCLogMessageFormatter;
 @class VLCMediaPlayerChapterDescription;
 @class VLCMediaPlayerTitleDescription;
-
-#if TARGET_OS_IPHONE
-@class VLCAudio;
-@class VLCMediaListPlayer;
-@class VLCMediaPlayer;
-@class VLCMediaThumbnailer;
-@class VLCRendererDiscoverer;
-@class VLCRendererDiscovererDescription;
-@class VLCRendererItem;
-#else
-@class VLCVideoView;
-#endif

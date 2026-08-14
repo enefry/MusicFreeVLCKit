@@ -1,0 +1,36 @@
+{
+  "vlckit": {
+    "repository": "https://github.com/enefry/MusicFreeVLCKit",
+    "base_commit": "e3774eb25c62c902e9066ba267e6416d82e83382"
+  },
+  "libvlc": {
+    "repository": "https://code.videolan.org/videolan/vlc.git",
+    "base_commit": "2cd8705589d3b125f236d1af695c3961fdcf6ca4",
+    "patches": "libvlc/patches/*.patch",
+    "patch_count": 28,
+    "patched_tree": "34c486a4b371e57b4d37bff288222c26fb86d8a0"
+  },
+  "contrib": {
+    "ffmpeg": {
+      "version": "8.1.2",
+      "git_commit": "ec47a3b95f88fc3f820b900038ac439e4eb3fede",
+      "sha512": "b3adc16fe426217bb607da01c4137cee0a9788fc08e077874336db185d2b7287746a7dc94cf0181ea92cd8afcdb06094ee9456e2986112354f84538cb9a5ed0b"
+    },
+    "flac": { "version": "1.5.0" },
+    "ogg": { "version": "1.3.6" },
+    "opus": { "version": "1.6.1" },
+    "vorbis": { "version": "1.3.7" },
+    "soxr": { "version": "0.1.3" },
+    "taglib": { "version": "2.3" },
+    "ebml": { "version": "1.4.6" },
+    "matroska": { "version": "1.7.2" },
+    "smb2": { "version": "6.1" },
+    "nfs": { "version": "6.0.2" },
+    "zlib": { "version": "1.3.2" }
+  },
+  "toolchain": {
+    "xcode": "26.6",
+    "ios_sdk": "26.5",
+    "deployment_target": "26.0"
+  }
+}

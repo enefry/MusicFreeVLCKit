@@ -1,0 +1,100 @@
+profile: musicfree-audio-ios
+allowed_modules:
+  - filesystem
+  - http
+  - ftp
+  - nfs
+  - smb2
+  - avcodec
+  - flac
+  - opus
+  - vorbis
+  - ogg
+  - flacsys
+  - wav
+  - aiff
+  - caf
+  - tta
+  - mkv
+  - mp4
+  - es
+  - rawaud
+  - araw
+  - adpcm
+  - g711
+  - lpcm
+  - mpegaudio
+  - mpeg4audio
+  - packetizer_flac
+  - packetizer_copy
+  - audio_format
+  - ugly_resampler
+  - scaletempo
+  - scaletempo_pitch
+  - equalizer
+  - soxr
+  - taglib
+  - folder
+  - securetransport
+  - uikit_inhibit
+  - audiounit_ios
+  - avsamplebuffer
+required_modules:
+  - access_libfilesystem
+  - access_http
+  - access_ftp
+  - access_libnfs
+  - access_libsmb2
+  - codec_adpcm
+  - codec_araw
+  - codec_avcodec_libavcodec
+  - codec_g711
+  - codec_libflac
+  - codec_libopus
+  - codec_libvorbis
+  - codec_lpcm
+  - demux_aiff
+  - demux_caf
+  - demux_libflacsys
+  - demux_libogg
+  - demux_mkv_libmkv
+  - demux_mp4_mp4
+  - demux_mpeg_es
+  - demux_rawaud
+  - demux_tta
+  - demux_wav
+  - packetizer_copy
+  - packetizer_flac
+  - packetizer_mpeg4audio
+  - packetizer_mpegaudio
+  - audio_filter_equalizer
+  - audio_filter_resampler_libsoxr
+  - audio_output_apple_audiounit_ios
+  - audio_output_apple_libavsamplebuffer
+  - meta_engine_libtaglib
+forbidden_modules:
+  - name: videotoolbox
+  - name: videotoolbox_enc
+  - name: samplebufferdisplay
+  - name: vout_ios
+  - name: opengl
+  - name: opengles2
+  - name: playlist
+  - name: directory
+  - name: adaptive
+  - name: live555
+  - name: sftp
+  - name: rtp
+  - name: udp
+  - name: srt
+  - name: rist
+  - name: upnp
+  - name: bonjour
+  - name: microdns
+  - name: avahi
+  - name: freetype
+  - name: libass
+  - name: lua
+  - name: sout
+  - name: transcode
+  - name: record
