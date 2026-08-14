@@ -627,11 +627,38 @@ if [ "$SKIPLIBVLCCOMPILATION" != "yes" ]; then
 
     fetch_python3_path
     # Keep host tools deterministic. In particular, an inherited VLC_PATH can
-    # prepend stale binaries such as an incompatible external protoc.
-    export PATH="${PYTHON3_PATH}:${VLCROOT}/extras/tools/build/bin:${VLCROOT}/contrib/${TARGET}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    # prepend stale binaries such as an incompatible external protoc. CI can
+    # explicitly provide a curated host-tool directory without inheriting the
+    # runner's full PATH.
+    HOST_TOOLS_PATH="${MUSICFREE_VLC_HOST_TOOLS_PATH:-}"
+    TOOL_PATH=""
+    if [ -n "${HOST_TOOLS_PATH}" ]; then
+        TOOL_PATH="${HOST_TOOLS_PATH}"
+    fi
+    if [ -n "${PYTHON3_PATH}" ]; then
+        TOOL_PATH="${TOOL_PATH:+${TOOL_PATH}:}${PYTHON3_PATH}"
+    fi
+    export PATH="${TOOL_PATH:+${TOOL_PATH}:}${VLCROOT}/extras/tools/build/bin:${VLCROOT}/contrib/${TARGET}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
     spushd ${VLCROOT}/extras/tools
     ./bootstrap
+    if [ "${MUSICFREE_VLC_REQUIRE_HOST_TOOLS:-no}" = "yes" ]; then
+        BOOTSTRAP_TARGETS=$(sed -n 's/^all:[[:space:]]*//p' Makefile)
+        UNEXPECTED_BOOTSTRAP_TARGETS=""
+        for target in ${BOOTSTRAP_TARGETS}; do
+            case "${target}" in
+                .buildconfigguess)
+                    ;;
+                *)
+                    UNEXPECTED_BOOTSTRAP_TARGETS="${UNEXPECTED_BOOTSTRAP_TARGETS} ${target}"
+                    ;;
+            esac
+        done
+        if [ -n "${UNEXPECTED_BOOTSTRAP_TARGETS}" ]; then
+            echo "*** VLC bootstrap rejected required host tools:${UNEXPECTED_BOOTSTRAP_TARGETS} ***" >&2
+            exit 1
+        fi
+    fi
     make
     spopd #${VLCROOT}/extras/tools
 fi

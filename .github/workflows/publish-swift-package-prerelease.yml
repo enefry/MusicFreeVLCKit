@@ -82,9 +82,93 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare VLC host tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+
+          brew install \
+            ant \
+            autoconf \
+            automake \
+            bison \
+            cmake \
+            gettext \
+            help2man \
+            libtool \
+            m4 \
+            make \
+            meson \
+            nasm \
+            ninja \
+            pkgconf \
+            xz \
+            zstd
+
+          host_tools="${RUNNER_TEMP}/musicfree-vlc-host-tools/bin"
+          mkdir -p "${host_tools}"
+
+          link_tool() {
+            source_path="$1"
+            target_name="${2:-$(basename "${source_path}")}"
+            if [ ! -x "${source_path}" ]; then
+              echo "Required VLC host tool is missing: ${source_path}" >&2
+              exit 1
+            fi
+            ln -sf "${source_path}" "${host_tools}/${target_name}"
+          }
+
+          link_tool "$(brew --prefix autoconf)/bin/autoconf"
+          link_tool "$(brew --prefix autoconf)/bin/autoheader"
+          link_tool "$(brew --prefix autoconf)/bin/autom4te"
+          link_tool "$(brew --prefix autoconf)/bin/autoreconf"
+          link_tool "$(brew --prefix automake)/bin/aclocal"
+          link_tool "$(brew --prefix automake)/bin/automake"
+          link_tool "$(brew --prefix m4)/bin/m4"
+          link_tool "$(brew --prefix libtool)/bin/glibtool"
+          link_tool "$(brew --prefix libtool)/bin/glibtool" libtool
+          link_tool "$(brew --prefix libtool)/bin/glibtoolize"
+          link_tool "$(brew --prefix libtool)/bin/glibtoolize" libtoolize
+          link_tool "$(brew --prefix make)/bin/gmake"
+          link_tool "$(brew --prefix make)/bin/gmake" make
+          link_tool "$(brew --prefix pkgconf)/bin/pkg-config"
+          link_tool "$(brew --prefix cmake)/bin/cmake"
+          link_tool "$(brew --prefix zstd)/bin/zstd"
+          link_tool "$(brew --prefix ant)/bin/ant"
+          link_tool "$(brew --prefix xz)/bin/xz"
+          link_tool "$(brew --prefix bison)/bin/bison"
+          link_tool "$(brew --prefix nasm)/bin/nasm"
+          link_tool "$(brew --prefix gettext)/bin/gettext"
+          link_tool "$(brew --prefix gettext)/bin/autopoint"
+          link_tool "$(brew --prefix help2man)/bin/help2man"
+          link_tool "$(brew --prefix meson)/bin/meson"
+          link_tool "$(brew --prefix ninja)/bin/ninja"
+
+          tool_path="${host_tools}:/usr/bin:/bin:/usr/sbin:/sbin"
+          for tool in \
+            autoconf automake m4 libtool make pkg-config cmake zstd xz bison \
+            gettext help2man meson ninja; do
+            PATH="${tool_path}" "${tool}" --version | sed -n '1p'
+          done
+          PATH="${tool_path}" ant -version
+          PATH="${tool_path}" nasm -v
+
+          aclocal_path="$(brew --prefix)/share/aclocal"
+          for formula in gettext libtool pkgconf; do
+            formula_aclocal="$(brew --prefix "${formula}")/share/aclocal"
+            if [ -d "${formula_aclocal}" ]; then
+              aclocal_path="${formula_aclocal}:${aclocal_path}"
+            fi
+          done
+
+          echo "MUSICFREE_VLC_HOST_TOOLS_PATH=${host_tools}" >> "${GITHUB_ENV}"
+          echo "ACLOCAL_PATH=${aclocal_path}" >> "${GITHUB_ENV}"
+
       - name: Build release XCFramework
         env:
           MUSICFREE_BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          MUSICFREE_VLC_REQUIRE_HOST_TOOLS: "yes"
         run: |
           set -euo pipefail
           env -u VLC_PATH ./compileAndBuildVLCKit.sh -f -r
