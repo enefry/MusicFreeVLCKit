@@ -133,7 +133,7 @@ RELEASE_ROOT="${RELEASE_ROOT}" \
     "target" => "arm64-apple-ios26.0",
     "sdk" => `xcrun --sdk iphoneos --show-sdk-version`.strip,
     "notes" => [
-      "The consumer imports VLCKit and references VLCLibrary, VLCMedia, VLCMediaPlayer, and VLCAudioEqualizer.",
+      "The consumer imports VLCKit and references its library, media, player, equalizer, playback-rate, volume, and mute APIs.",
       "The SwiftPM 5.9 manifest declares iOS 12 for syntax compatibility; the binary and build use the iPhoneOS 26 SDK.",
       "The linker may warn that the framework minimum OS version is newer than the package declaration; this is not an older-iOS compatibility pass."
     ],

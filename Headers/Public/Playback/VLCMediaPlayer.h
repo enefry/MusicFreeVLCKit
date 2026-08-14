@@ -457,6 +457,8 @@ typedef NS_ENUM(NSInteger, VLCVideoFitMode) {
  */
 @property (nonatomic) float gamma __deprecated_msg("Use -[VLCMediaPlayer adjustFilter].gamma instead");
 
+#endif
+
 /**
  * Get the requested movie play rate.
  * @warning Depending on the underlying media, the requested rate may be
@@ -473,6 +475,7 @@ typedef NS_ENUM(NSInteger, VLCVideoFitMode) {
  */
 @property (nonatomic, readonly, weak) VLCAudio * audio;
 
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 /* Video Information */
 /**
  * Get the current video size
