@@ -38,6 +38,36 @@ if [ "${checksum}" != "${expected_checksum}" ] || [ "${checksum}" != "${archive_
     exit 1
 fi
 
+archive_listing="${stage_root}/archive-files.txt"
+unzip -Z1 "${ARCHIVE}" > "${archive_listing}"
+expected_license_count=$(find "${RELEASE_ROOT}/third-party-licenses" -type f | wc -l | tr -d ' ')
+archive_license_count=$(awk '/^VLCKit\.xcframework\/LICENSES\/third-party-licenses\/[^\/]+$/ { count += 1 } END { print count + 0 }' "${archive_listing}")
+if [ "${archive_license_count}" != "${expected_license_count}" ]; then
+    printf '%s\n' "license count mismatch: archive=${archive_license_count}, expected=${expected_license_count}" >&2
+    exit 1
+fi
+for license_path in "${RELEASE_ROOT}/third-party-licenses"/*
+do
+    [ -f "${license_path}" ] || continue
+    packaged_path="VLCKit.xcframework/LICENSES/third-party-licenses/$(basename "${license_path}")"
+    if ! grep -Fxq "${packaged_path}" "${archive_listing}"; then
+        printf '%s\n' "missing packaged license: ${packaged_path}" >&2
+        exit 1
+    fi
+done
+for required_file in \
+    VLCKit.xcframework/LICENSES/THIRD-PARTY-NOTICES.md \
+    VLCKit.xcframework/LICENSES/LICENSE-STATUS.md \
+    VLCKit.xcframework/LICENSES/RELINKING.md \
+    VLCKit.xcframework/LICENSES/compliance.json \
+    VLCKit.xcframework/LICENSES/sbom.spdx.json
+do
+    if ! grep -Fxq "${required_file}" "${archive_listing}"; then
+        printf '%s\n' "missing packaged license material: ${required_file}" >&2
+        exit 1
+    fi
+done
+
 dump_status=passed
 if ! SWIFT_MODULECACHE_PATH="${stage_root}/ModuleCache" \
     CLANG_MODULE_CACHE_PATH="${stage_root}/ModuleCache" \
@@ -65,6 +95,7 @@ BUILD_ID="${build_id}" \
 ARCHIVE_PATH="${ARCHIVE}" \
 ARCHIVE_SHA256="${archive_sha256}" \
 SWIFTPM_CHECKSUM="${checksum}" \
+ARCHIVE_LICENSE_COUNT="${archive_license_count}" \
 PACKAGE_DUMP_STATUS="${dump_status}" \
 BUILD_STATUS="${build_status}" \
 LINK_STATUS="${link_status}" \
@@ -75,6 +106,7 @@ BUILD_ID="${build_id}" \
 ARCHIVE_PATH="${ARCHIVE}" \
 ARCHIVE_SHA256="${archive_sha256}" \
 SWIFTPM_CHECKSUM="${checksum}" \
+ARCHIVE_LICENSE_COUNT="${archive_license_count}" \
 PACKAGE_DUMP_STATUS="${dump_status}" \
 BUILD_STATUS="${build_status}" \
 LINK_STATUS="${link_status}" \
@@ -93,6 +125,8 @@ RELEASE_ROOT="${RELEASE_ROOT}" \
     "archive_sha256" => ENV.fetch("ARCHIVE_SHA256"),
     "swiftpm_checksum" => ENV.fetch("SWIFTPM_CHECKSUM"),
     "checksum_matches_archive_sha256" => ENV.fetch("ARCHIVE_SHA256") == ENV.fetch("SWIFTPM_CHECKSUM"),
+    "packaged_license_file_count" => ENV.fetch("ARCHIVE_LICENSE_COUNT").to_i,
+    "licenses_packaged" => ENV.fetch("ARCHIVE_LICENSE_COUNT").to_i > 0,
     "package_dump" => ENV.fetch("PACKAGE_DUMP_STATUS"),
     "swift_build" => ENV.fetch("BUILD_STATUS"),
     "ios_link" => ENV.fetch("LINK_STATUS"),

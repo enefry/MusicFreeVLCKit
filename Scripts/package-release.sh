@@ -25,6 +25,10 @@ MUSICFREE_VLCKIT_BUILD_ROOT="${BUILD_ROOT}" \
     MUSICFREE_VLCKIT_RELEASE_ROOT="${RELEASE_DIR}" \
     "${SCRIPT_DIR}/generate-build-metadata.sh"
 
+MUSICFREE_VLCKIT_BUILD_ROOT="${BUILD_ROOT}" \
+    MUSICFREE_VLCKIT_RELEASE_ROOT="${RELEASE_DIR}" \
+    "${SCRIPT_DIR}/generate-compliance.sh"
+
 stage_dir=$(mktemp -d "${TMPDIR:-/private/tmp}/musicfree-vlckit-package.XXXXXX")
 trap 'rm -rf "${stage_dir}"' EXIT HUP INT TERM
 mkdir -p "${RELEASE_DIR}"
@@ -33,7 +37,20 @@ if [ ! -d "${XCFRAMEWORK}" ]; then
     exit 1
 fi
 cp -R "${XCFRAMEWORK}" "${stage_dir}/VLCKit.xcframework"
-# Normalize archive metadata so repeated packaging of the same XCFramework
+LICENSES_DIR="${stage_dir}/VLCKit.xcframework/LICENSES"
+mkdir -p "${LICENSES_DIR}"
+cp -R "${RELEASE_DIR}/third-party-licenses" "${LICENSES_DIR}/third-party-licenses"
+for compliance_file in \
+    THIRD-PARTY-NOTICES.md \
+    LICENSE-STATUS.md \
+    RELINKING.md \
+    compliance.json \
+    sbom.spdx.json
+do
+    cp "${RELEASE_DIR}/${compliance_file}" "${LICENSES_DIR}/${compliance_file}"
+done
+
+# Normalize archive metadata so repeated packaging of the same payload
 # produces the same SwiftPM checksum.
 find "${stage_dir}/VLCKit.xcframework" -exec touch -t 202601010000 {} +
 
@@ -44,10 +61,6 @@ mv "${archive_tmp}" "${ARCHIVE_PATH}"
 swift_checksum=$(swift package compute-checksum "${ARCHIVE_PATH}")
 printf '%s\n' "${swift_checksum}" > "${RELEASE_DIR}/swiftpm-checksum.txt"
 shasum -a 256 "${ARCHIVE_PATH}" > "${RELEASE_DIR}/checksums.txt"
-
-MUSICFREE_VLCKIT_BUILD_ROOT="${BUILD_ROOT}" \
-    MUSICFREE_VLCKIT_RELEASE_ROOT="${RELEASE_DIR}" \
-    "${SCRIPT_DIR}/generate-compliance.sh"
 
 MUSICFREE_VLCKIT_BUILD_ROOT="${BUILD_ROOT}" \
     MUSICFREE_VLCKIT_RELEASE_ROOT="${RELEASE_DIR}" \

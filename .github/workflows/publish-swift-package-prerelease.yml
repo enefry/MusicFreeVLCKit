@@ -1,0 +1,184 @@
+name: Publish Swift package pre-release
+run-name: Publish ${{ inputs.release_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "SemVer pre-release tag, for example 4.0.0-audio.20260814.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: musicfree-vlckit-prerelease
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      ASSET_NAME: MusicFreeVLCKit.xcframework.zip
+      BUILD_ROOT: ${{ github.workspace }}/build-audio-ios-${{ github.run_id }}-${{ github.run_attempt }}
+      RELEASE_ROOT: ${{ github.workspace }}/build-audio-ios-${{ github.run_id }}-${{ github.run_attempt }}/release
+      MAKEFLAGS: -j2
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ./Scripts/update-swiftpm-manifest.sh \
+            "${GITHUB_REPOSITORY}" \
+            "${RELEASE_TAG}" \
+            "${ASSET_NAME}" \
+            "0000000000000000000000000000000000000000000000000000000000000000" \
+            Package.swift
+          git restore Package.swift
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release already exists: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      - name: Verify Xcode toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          sdk_major=${sdk_version%%.*}
+          if [ "${sdk_major}" -lt 26 ]; then
+            echo "iOS 26 SDK or newer is required; found ${sdk_version}" >&2
+            exit 1
+          fi
+
+      - name: Build release XCFramework
+        env:
+          MUSICFREE_BUILD_ROOT: ${{ env.BUILD_ROOT }}
+        run: |
+          set -euo pipefail
+          env -u VLC_PATH ./compileAndBuildVLCKit.sh -f -r
+
+      - name: Package and verify SwiftPM artifact
+        id: package
+        env:
+          MUSICFREE_VLCKIT_ARCHIVE_NAME: ${{ env.ASSET_NAME }}
+          MUSICFREE_VLCKIT_BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          MUSICFREE_VLCKIT_RELEASE_ROOT: ${{ env.RELEASE_ROOT }}
+        run: |
+          set -euo pipefail
+          ./Scripts/package-release.sh
+
+          checksum=$(tr -d '\n' < "${RELEASE_ROOT}/swiftpm-checksum.txt")
+          archive="${RELEASE_ROOT}/${ASSET_NAME}"
+          test -f "${archive}"
+          test "$(swift package compute-checksum "${archive}")" = "${checksum}"
+
+          compliance_archive="${BUILD_ROOT}/MusicFreeVLCKit-compliance-${RELEASE_TAG}.tar.gz"
+          tar -czf "${compliance_archive}" \
+            --exclude="./${ASSET_NAME}" \
+            -C "${RELEASE_ROOT}" .
+
+          echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
+          echo "checksum=${checksum}" >> "${GITHUB_OUTPUT}"
+          echo "compliance_archive=${compliance_archive}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release manifest and tag
+        env:
+          SWIFTPM_CHECKSUM: ${{ steps.package.outputs.checksum }}
+        run: |
+          set -euo pipefail
+
+          ./Scripts/update-swiftpm-manifest.sh \
+            "${GITHUB_REPOSITORY}" \
+            "${RELEASE_TAG}" \
+            "${ASSET_NAME}" \
+            "${SWIFTPM_CHECKSUM}" \
+            Package.swift
+
+          module_cache="${RUNNER_TEMP}/swift-module-cache"
+          mkdir -p "${module_cache}"
+          SWIFT_MODULECACHE_PATH="${module_cache}" \
+            CLANG_MODULE_CACHE_PATH="${module_cache}" \
+            swift package dump-package --disable-sandbox > "${RUNNER_TEMP}/package.json"
+
+          PACKAGE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ASSET_NAME}" \
+            /usr/bin/ruby -rjson - "${RUNNER_TEMP}/package.json" <<'RUBY'
+          package = JSON.parse(File.read(ARGV.fetch(0)))
+          target = package.fetch("targets").find { |entry| entry.fetch("name") == "VLCKit" }
+          abort "missing VLCKit binary target" unless target
+          abort "release URL mismatch" unless target.fetch("url") == ENV.fetch("PACKAGE_URL")
+          abort "SwiftPM checksum mismatch" unless target.fetch("checksum") == ENV.fetch("SWIFTPM_CHECKSUM")
+          RUBY
+
+          unexpected_changes=$(git diff --name-only | grep -v '^Package.swift$' || true)
+          if [ -n "${unexpected_changes}" ]; then
+            echo "Build changed tracked files unexpectedly:" >&2
+            echo "${unexpected_changes}" >&2
+            exit 1
+          fi
+          if git diff --quiet -- Package.swift; then
+            echo "Package.swift was not updated for ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          git commit -m "Release ${RELEASE_TAG}"
+          git tag -a "${RELEASE_TAG}" -m "MusicFreeVLCKit ${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          SWIFTPM_CHECKSUM: ${{ steps.package.outputs.checksum }}
+          COMPLIANCE_ARCHIVE: ${{ steps.package.outputs.compliance_archive }}
+        run: |
+          set -euo pipefail
+
+          notes="${RUNNER_TEMP}/release-notes.md"
+          {
+            echo "MusicFree audio-only VLCKit Swift package pre-release."
+            echo
+            echo "- Source commit: \`${GITHUB_SHA}\`"
+            echo "- SwiftPM checksum: \`${SWIFTPM_CHECKSUM}\`"
+            echo "- Platforms: iOS device arm64; iOS Simulator arm64 and x86_64"
+            echo "- Licenses: embedded in \`VLCKit.xcframework/LICENSES/\`"
+            echo
+            echo "Use this repository as a Swift package dependency with exact version \`${RELEASE_TAG}\`."
+            echo "Build, static-audit, SwiftPM consumer, SBOM, and LGPL materials are included in the compliance archive. Runtime and legal gates remain documented in those materials."
+          } > "${notes}"
+
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --draft \
+            --prerelease \
+            --title "MusicFreeVLCKit ${RELEASE_TAG}" \
+            --notes-file "${notes}"
+
+          gh release upload "${RELEASE_TAG}" \
+            "${ARCHIVE}" \
+            "${RELEASE_ROOT}/swiftpm-checksum.txt" \
+            "${RELEASE_ROOT}/checksums.txt" \
+            "${COMPLIANCE_ARCHIVE}"
+
+          gh release edit "${RELEASE_TAG}" --draft=false

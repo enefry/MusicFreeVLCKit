@@ -19,6 +19,7 @@
     - [Cocoapods](#cocoapods)
     - [Carthage](#carthage)
 - [Documentation](#documentation)
+- [MusicFree upstream upgrade guide](Documentation/MUSICFREE_UPSTREAM_UPGRADE_GUIDE.md)
 - [Build](#build)
     - [Default](#default)
     - [Build with your own VLC repository](#build-with-your-own-vlc-repository)
@@ -154,6 +155,8 @@ On iOS and tvOS, you also need to link:
 
 ## Documentation
 API documentation of VLCKit is available [online](https://videolan.videolan.me/VLCKit) and within both the source code as well as binary downloads. Except as indicated, all the APIs are the same on macOS, iOS and tvOS.
+
+MusicFree maintainers should follow the [upstream upgrade and mainline merge guide](Documentation/MUSICFREE_UPSTREAM_UPGRADE_GUIDE.md) when moving the audio-only profile to a newer VLCKit/libVLC source pair.
 
 ## Build
 

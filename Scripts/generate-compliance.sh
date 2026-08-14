@@ -98,8 +98,12 @@ REPO_ROOT="${REPO_ROOT}" BUILD_ROOT="${BUILD_ROOT}" RELEASE_ROOT="${RELEASE_ROOT
   }
 
   copied_licenses = []
+  missing_licenses = []
   license_sources.each do |name, source|
-    next unless File.file?(source)
+    unless source && File.file?(source)
+      missing_licenses << name
+      next
+    end
     destination = File.join(release_root, "third-party-licenses", name)
     FileUtils.cp(source, destination)
     copied_licenses << {
@@ -109,6 +113,7 @@ REPO_ROOT="${REPO_ROOT}" BUILD_ROOT="${BUILD_ROOT}" RELEASE_ROOT="${RELEASE_ROOT
       "size_bytes" => File.size(destination)
     }
   end
+  abort "missing required license files: #{missing_licenses.join(", ")}" unless missing_licenses.empty?
 
   patches = Dir.glob(File.join(repo_root, "libvlc", "patches", "*.patch")).sort.map do |path|
     {
@@ -155,7 +160,8 @@ REPO_ROOT="${REPO_ROOT}" BUILD_ROOT="${BUILD_ROOT}" RELEASE_ROOT="${RELEASE_ROOT
       "lgpl_text" => "third-party-licenses/MusicFreeVLCKit-LGPL-2.1.txt",
       "libvlc_lgpl_text" => "third-party-licenses/libVLC-COPYING.LIB",
       "third_party_notice_index" => "THIRD-PARTY-NOTICES.md",
-      "copied_license_files" => copied_licenses
+      "copied_license_files" => copied_licenses,
+      "missing_license_files" => missing_licenses
     },
     "corresponding_source" => {
       "vlckit_commit" => manifest.dig("source", "vlckit_commit"),
@@ -172,7 +178,7 @@ REPO_ROOT="${REPO_ROOT}" BUILD_ROOT="${BUILD_ROOT}" RELEASE_ROOT="${RELEASE_ROOT
     },
     "gates" => {
       "sbom_generated" => "passed",
-      "license_texts_collected" => copied_licenses.length >= 10 ? "passed" : "partial",
+      "license_texts_collected" => missing_licenses.empty? ? "passed" : "failed",
       "source_provenance" => "partial",
       "relink_material" => "open",
       "legal_review" => "open"
