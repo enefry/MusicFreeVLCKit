@@ -26,6 +26,7 @@
 | MusicFree VLCKit 分支 | <code>musicfree/audio-ios-r5</code> | 外层 Git 当前分支 |
 | r5 音频裁剪实现 | <code>ccc4c87d01a11e0856690163560396c1269aa50c</code> | 外层 Git 历史 |
 | 发布自动化与原指南基线 | <code>88d045963bbb2dc31af99d37f42a8fd25dbda5e6</code> | 外层 Git 历史；本指南修订前的已知维护 commit |
+| 当前已知良好外层 HEAD | <code>8decf514278382c314df3e292adaf0ac1a9465d4</code> | 2026-08-14 的 <code>musicfree/audio-ios-r5</code> 与 <code>origin/musicfree/audio-ios-r5</code>；包含后续 workflow 和 VLC host tools 修订 |
 | VLCKit 上游基线 | <code>e3774eb25c62c902e9066ba267e6416d82e83382</code>，tag <code>4.0.0-a23</code> | <code>Config/sources.lock.json</code> |
 | libVLC 上游基线 | <code>2cd8705589d3b125f236d1af695c3961fdcf6ca4</code> | <code>Config/sources.lock.json</code> 与 <code>TESTEDHASH</code> |
 | libVLC 补丁 | 28 个，<code>0001</code> 到 <code>0028</code> | <code>libvlc/patches/*.patch</code> |
@@ -101,6 +102,8 @@ shopt -s nullglob
 
 每个阶段失败后立即停止，不得继续打包或清理。解决 <code>cherry-pick</code>/<code>am</code> 冲突后，先确认 sequencer 已完成、源码状态符合预期，再进入下一阶段。若另开 shell，必须重新定义并核对所有路径、commit 和数组变量。
 
+所有 <code>REPLACE_WITH_*</code> 都是本轮必须从实时候选、命令输出或维护者审批取得的输入，不是可猜测的示例默认值。相关命令必须在占位符未替换、URL/commit/patch identity 不匹配或审批引用为空时以非零状态停止，并把输入来源写入升级记录。目标版本、发布权限、设备、协议服务或法律批准无法取得时，正确结果是 <code>blocked</code>，不是由 agent 自行补值。
+
 ## 6. 阶段 A：预检和目标选择
 
 ### 6.1 保持已知良好分支不动
@@ -112,10 +115,16 @@ shopt -s nullglob
 ~~~bash
 vlckit_repo=$(git rev-parse --show-toplevel)
 baseline_branch=musicfree/audio-ios-r5
+baseline_outer_commit=$(git -C "$vlckit_repo" \
+  rev-parse "$baseline_branch^{commit}")
+git -C "$vlckit_repo" cat-file -e \
+  "$baseline_outer_commit^{commit}"
 upgrade_id=REPLACE_WITH_DATE_AND_TARGET
+test -n "$upgrade_id"
+test "$upgrade_id" != "REPLACE_WITH_DATE_AND_TARGET"
 
 git -C "$vlckit_repo" status --short --branch
-git -C "$vlckit_repo" rev-parse HEAD
+printf "baseline_outer_commit=%s\n" "$baseline_outer_commit"
 jq . "$vlckit_repo/Config/sources.lock.json"
 
 if git -C "$vlckit_repo/libvlc/vlc" rev-parse --git-dir >/dev/null 2>&1; then
@@ -138,9 +147,16 @@ git -C "$vlckit_repo" rev-parse --is-shallow-repository
 upstream_vlckit_url=$(git -C "$vlckit_repo" \
   remote get-url videolan)
 printf "videolan_remote=%s\n" "$upstream_vlckit_url"
-# Stop unless this is the reviewed official VideoLAN VLCKit repository.
+reviewed_videolan_url=REPLACE_WITH_REVIEWED_OFFICIAL_URL
+test -n "$reviewed_videolan_url"
+test "$reviewed_videolan_url" != \
+  "REPLACE_WITH_REVIEWED_OFFICIAL_URL"
+test "$upstream_vlckit_url" = "$reviewed_videolan_url"
 
 target_vlckit_ref=REPLACE_WITH_REVIEWED_TAG_OR_BRANCH
+test -n "$target_vlckit_ref"
+test "$target_vlckit_ref" != \
+  "REPLACE_WITH_REVIEWED_TAG_OR_BRANCH"
 git -C "$vlckit_repo" fetch videolan "$target_vlckit_ref"
 target_vlckit_commit=$(git -C "$vlckit_repo" \
   rev-parse "FETCH_HEAD^{commit}")
@@ -184,6 +200,10 @@ known upstream breaking changes:
 一个 worktree 保持纯上游目标，用来读取上游补丁栈；另一个 worktree 承载 MusicFree 集成。
 
 ~~~bash
+target_vlckit_approval=REPLACE_WITH_TARGET_VLCKIT_REVIEW_REFERENCE
+test -n "$target_vlckit_approval"
+test "$target_vlckit_approval" != \
+  "REPLACE_WITH_TARGET_VLCKIT_REVIEW_REFERENCE"
 upgrade_root=$(mktemp -d /private/tmp/musicfree-vlckit-upgrade.XXXXXX)
 upstream_vlckit_worktree="$upgrade_root/VLCKit-upstream"
 vlckit_worktree="$upgrade_root/VLCKit-integration"
@@ -206,28 +226,39 @@ old_vlckit_base=$(jq -r .vlckit.base_commit \
   "$vlckit_repo/Config/sources.lock.json")
 
 git -C "$vlckit_repo" merge-base --is-ancestor \
-  "$old_vlckit_base" "$baseline_branch"
+  "$old_vlckit_base" "$baseline_outer_commit"
 
 merge_commits=$(git -C "$vlckit_repo" rev-list --merges \
-  "$old_vlckit_base..$baseline_branch")
+  "$old_vlckit_base..$baseline_outer_commit")
 test -z "$merge_commits"
 
 git -C "$vlckit_repo" log --reverse --oneline \
-  "$old_vlckit_base..$baseline_branch"
+  "$old_vlckit_base..$baseline_outer_commit"
 
-custom_commits=$(git -C "$vlckit_repo" rev-list --reverse \
-  "$old_vlckit_base..$baseline_branch")
-test -n "$custom_commits"
+custom_commits=()
+while IFS= read -r commit; do
+  custom_commits+=("$commit")
+done < <(git -C "$vlckit_repo" rev-list --reverse \
+  "$old_vlckit_base..$baseline_outer_commit")
+test "${#custom_commits[@]}" -gt 0
 
-for commit in $custom_commits; do
+for commit in "${custom_commits[@]}"; do
   git -C "$vlckit_repo" show --stat --oneline "$commit"
 done
 
-# Stop here until every listed commit is confirmed as MusicFree-owned.
-git -C "$vlckit_worktree" cherry-pick -x $custom_commits
+reviewed_custom_commits=(
+  REPLACE_WITH_REVIEWED_40_CHARACTER_COMMIT_LIST
+)
+custom_commit_scope_approval=REPLACE_WITH_COMMIT_SCOPE_REVIEW_REFERENCE
+test "${reviewed_custom_commits[*]}" = "${custom_commits[*]}"
+test -n "$custom_commit_scope_approval"
+test "$custom_commit_scope_approval" != \
+  "REPLACE_WITH_COMMIT_SCOPE_REVIEW_REFERENCE"
+git -C "$vlckit_worktree" cherry-pick -x \
+  "${reviewed_custom_commits[@]}"
 ~~~
 
-当前已知范围至少包含 <code>ccc4c87d</code> 的音频裁剪实现和 <code>88d04596</code> 的发布自动化/文档；本指南后续提交还会继续增加数量。始终以命令实时列出的完整范围为准，不得写死 commit 数量。若范围包含 merge commit 或意外上游提交，停止并显式整理 MusicFree commit 清单，不要给 <code>cherry-pick</code> 猜测 mainline。
+当前已知范围至少包含 <code>ccc4c87d</code> 的音频裁剪实现、<code>88d04596</code>/<code>102d9f53</code> 的发布自动化与升级流程，以及 <code>8decf514</code> 的 VLC host tools 修订；本指南后续提交还会继续增加数量。始终以命令实时列出的完整范围为准，不得写死 commit 数量。若范围包含 merge commit 或意外上游提交，停止并显式整理 MusicFree commit 清单，不要给 <code>cherry-pick</code> 猜测 mainline。
 
 ### 7.3 外层冲突处理原则
 
@@ -256,7 +287,12 @@ rg -n "TESTEDHASH|libvlc.*commit|git checkout" \
   "$upstream_vlckit_worktree/Config" 2>/dev/null
 
 new_vlc_base=REPLACE_WITH_VALUE_FOUND_ABOVE
+test -n "$new_vlc_base"
 test "$(printf "%s" "$new_vlc_base" | wc -c | tr -d " ")" -eq 40
+source_pair_approval=REPLACE_WITH_SOURCE_PAIR_REVIEW_REFERENCE
+test -n "$source_pair_approval"
+test "$source_pair_approval" != \
+  "REPLACE_WITH_SOURCE_PAIR_REVIEW_REFERENCE"
 ~~~
 
 将确认后的完整 40 位值保存为 <code>new_vlc_base</code>。如果新版上游改变了绑定方式，按新版事实更新本指南涉及的脚本，不要继续维护已经失效的 <code>TESTEDHASH</code> 模式。
@@ -278,9 +314,15 @@ fi
 actual_vlc_url=$(git -C "$vlc_repo" remote get-url origin)
 printf "locked_vlc_url=%s\nactual_vlc_url=%s\n" \
   "$vlc_url" "$actual_vlc_url"
-# Stop here until both URLs are confirmed to identify the same repository.
+reviewed_vlc_origin_url=REPLACE_WITH_REVIEWED_LIBVLC_ORIGIN_URL
+test -n "$reviewed_vlc_origin_url"
+test "$reviewed_vlc_origin_url" != \
+  "REPLACE_WITH_REVIEWED_LIBVLC_ORIGIN_URL"
+test "$actual_vlc_url" = "$reviewed_vlc_origin_url"
 
 new_vlc_ref=REPLACE_WITH_REVIEWED_TAG_OR_BRANCH
+test -n "$new_vlc_ref"
+test "$new_vlc_ref" != "REPLACE_WITH_REVIEWED_TAG_OR_BRANCH"
 
 git -C "$vlc_repo" rev-parse --is-shallow-repository
 git -C "$vlc_repo" fetch origin "$new_vlc_ref"
@@ -296,21 +338,48 @@ git -C "$vlc_repo" worktree add \
   "$vlc_worktree" "$new_vlc_base"
 ~~~
 
-<code>new_vlc_base</code> 必须直接来自第 8.1 节确认的上游绑定值，不能另行手填一个“接近”的 commit。若 repository URL 合法但字符串形式与 lock 不同，例如 SSH/HTTPS 或尾部 <code>.git</code> 差异，先人工确认同一仓库，再记录实际 remote；不要跳过来源检查。该目录仍保持外层 ignored。
+<code>new_vlc_base</code> 必须直接来自第 8.1 节确认的上游绑定值，不能另行手填一个“接近”的 commit。若 repository URL 合法但字符串形式与 lock 不同，例如 SSH/HTTPS 或尾部 <code>.git</code> 差异，先人工确认同一仓库，再记录实际 remote；不要跳过来源检查。若 shallow history 使 ancestry 不可用，对明确 ref 执行 <code>git fetch --deepen=500 origin "$new_vlc_ref"</code> 后重新计算 <code>fetched_vlc_commit</code> 和断言。该目录仍保持外层 ignored。
 
 ### 8.3 先重放新版 VLCKit 自带补丁
 
-第 8.3 到第 10 节的命令以“新版 VLCKit 仍使用有序 mail patch 栈”为前提。先在纯上游 worktree 确认该前提；只使用纯上游 VLCKit worktree 中的补丁。把 glob 固化为非空数组，再把完整序列一次交给 <code>git am</code>，这样解决冲突后 <code>git am --continue</code> 会继续剩余补丁：
+第 8.3 到第 10 节的命令以“新版 VLCKit 仍使用有序 mail patch 目录”为前提。先在纯上游 worktree 和新版构建脚本中确认该前提；只使用纯上游 VLCKit worktree 中的补丁。目录可以合法地包含 0 个上游补丁，此时边界就是 <code>new_vlc_base</code>；非空时把完整序列一次交给 <code>git am</code>，这样解决冲突后 <code>git am --continue</code> 会继续剩余补丁：
 
 ~~~bash
-upstream_patches=(
-  "$upstream_vlckit_worktree"/libvlc/patches/*.patch
-)
-test "${#upstream_patches[@]}" -gt 0
-git -C "$vlc_worktree" am -3 "${upstream_patches[@]}"
+upstream_patch_dir="$upstream_vlckit_worktree/libvlc/patches"
+upstream_patch_driver="$upstream_vlckit_worktree/compileAndBuildVLCKit.sh"
+test -d "$upstream_patch_dir"
+test -f "$upstream_patch_driver"
+
+# This guide supports only the reviewed ordered mail-patch mechanism.
+rg -q 'libvlc/patches/.*\.patch|libvlc/patches/\*\.patch' \
+  "$upstream_patch_driver"
+rg -q 'git[[:space:]]+am([[:space:]]|$)' \
+  "$upstream_patch_driver"
+upstream_patch_driver_sha256=$(shasum -a 256 \
+  "$upstream_patch_driver" | awk '{print $1}')
+reviewed_patch_driver_sha256=REPLACE_WITH_REVIEWED_PATCH_DRIVER_SHA256
+patch_mechanism_approval=REPLACE_WITH_PATCH_MECHANISM_REVIEW_REFERENCE
+test -n "$reviewed_patch_driver_sha256"
+test "$reviewed_patch_driver_sha256" != \
+  "REPLACE_WITH_REVIEWED_PATCH_DRIVER_SHA256"
+test "$reviewed_patch_driver_sha256" = \
+  "$upstream_patch_driver_sha256"
+test -n "$patch_mechanism_approval"
+test "$patch_mechanism_approval" != \
+  "REPLACE_WITH_PATCH_MECHANISM_REVIEW_REFERENCE"
+
+upstream_patches=("$upstream_patch_dir"/*.patch)
+for patch in "${upstream_patches[@]}"; do
+  relative_patch=${patch#"$upstream_vlckit_worktree/"}
+  git -C "$upstream_vlckit_worktree" ls-files --error-unmatch \
+    "$relative_patch" >/dev/null
+done
+if test "${#upstream_patches[@]}" -gt 0; then
+  git -C "$vlc_worktree" am -3 "${upstream_patches[@]}"
+fi
 ~~~
 
-如果上游改用 submodule commit、生成脚本或其他补丁机制，立即把本轮标记为 <code>migration-required</code> 并停止执行第 8.3 到第 10 节。先用单独、可 Review 的提交改造以下契约，再从第 8 节重新开始：构建脚本如何得到“上游修补后 tree”、MusicFree 自定义改动如何携带、lock 如何记录 mechanism/count/tree、clean replay 如何重建同一 tree、metadata/SBOM 如何列出修改源码。新机制必须提供与当前 <code>base + ordered patches -&gt; patched_tree</code> 等价的机器断言；不能只删掉非空数组或 <code>patch_count</code> 检查后继续。
+如果上游改用 submodule commit、生成脚本或其他补丁机制，立即把本轮状态标记为 <code>blocked</code>、原因为 <code>patch-mechanism-migration-required</code>，并停止执行第 8.3 到第 10 节。先用单独、可 Review 的提交改造以下契约，再从第 8 节重新开始：构建脚本如何得到“上游修补后 tree”、MusicFree 自定义改动如何携带、lock 如何记录 mechanism/count/tree、clean replay 如何重建同一 tree、metadata/SBOM 如何列出修改源码。新机制必须提供与当前 <code>base + ordered patches -&gt; patched_tree</code> 等价的机器断言；不能只删掉非空数组或 <code>patch_count</code> 检查后继续。
 
 全部上游补丁完成后保存边界 commit：
 
@@ -335,7 +404,22 @@ musicfree_patches=(
 test "${#musicfree_patches[@]}" -gt 0
 printf "%s\n" "${musicfree_patches[@]}"
 
-# Stop here until every listed patch is confirmed as MusicFree-owned.
+actual_musicfree_patch_identities=()
+for patch in "${musicfree_patches[@]}"; do
+  patch_sha256=$(shasum -a 256 "$patch" | awk '{print $1}')
+  actual_musicfree_patch_identities+=(
+    "$(basename "$patch"):$patch_sha256"
+  )
+done
+reviewed_musicfree_patch_identities=(
+  REPLACE_WITH_REVIEWED_BASENAME_AND_SHA256_LIST
+)
+musicfree_patch_scope_approval=REPLACE_WITH_PATCH_SCOPE_REVIEW_REFERENCE
+test "${reviewed_musicfree_patch_identities[*]}" = \
+  "${actual_musicfree_patch_identities[*]}"
+test -n "$musicfree_patch_scope_approval"
+test "$musicfree_patch_scope_approval" != \
+  "REPLACE_WITH_PATCH_SCOPE_REVIEW_REFERENCE"
 git -C "$vlc_worktree" am -3 "${musicfree_patches[@]}"
 ~~~
 
@@ -383,17 +467,29 @@ old_musicfree_patches=(
 test "${#old_musicfree_patches[@]}" -gt 0
 printf "%s\n" "${old_musicfree_patches[@]}"
 
-# Stop here until every listed file is confirmed as an old custom patch.
+integration_old_patch_identities=()
+for patch in "${old_musicfree_patches[@]}"; do
+  patch_sha256=$(shasum -a 256 "$patch" | awk '{print $1}')
+  integration_old_patch_identities+=(
+    "$(basename "$patch"):$patch_sha256"
+  )
+done
+test "${integration_old_patch_identities[*]}" = \
+  "${reviewed_musicfree_patch_identities[*]}"
 git -C "$vlckit_worktree" rm -- \
   "${old_musicfree_patches[@]}"
 
 upstream_patch_count="${#upstream_patches[@]}"
-last_upstream_patch=$(printf "%s\n" \
-  "${upstream_patches[@]}" | tail -n 1)
-last_upstream_number=$(basename "$last_upstream_patch" \
-  | cut -d- -f1 | sed "s/^0*//")
-test -n "$last_upstream_number"
-next_patch_number=$((last_upstream_number + 1))
+if test "$upstream_patch_count" -gt 0; then
+  last_upstream_patch=$(printf "%s\n" \
+    "${upstream_patches[@]}" | tail -n 1)
+  last_upstream_number=$(basename "$last_upstream_patch" \
+    | cut -d- -f1 | sed "s/^0*//")
+  test -n "$last_upstream_number"
+  next_patch_number=$((last_upstream_number + 1))
+else
+  next_patch_number=1
+fi
 
 expected_musicfree_patch_count=$(git -C "$vlc_worktree" \
   rev-list --count "$upstream_patched_commit..HEAD")
@@ -427,7 +523,124 @@ done
 
 检查生成结果只包含预期 MusicFree commit，编号连续，Subject 可读，且补丁能从 <code>new_vlc_base</code> 重放。
 
-### 9.3 更新锁定信息
+### 9.3 建立旧补丁迁移映射
+
+每个旧 MusicFree patch 必须在 <code>Documentation/upgrades/&lt;upgrade_id&gt;.patch-map.json</code> 中恰好出现一次，不能只在自由文本里写“已处理”。使用固定 schema：
+
+~~~json
+{
+  "schema_version": 1,
+  "old_libvlc_base": "40-character commit",
+  "new_libvlc_base": "40-character commit",
+  "entries": [
+    {
+      "old_patch": "0028-example-MusicFree.patch",
+      "old_sha256": "64-character sha256",
+      "disposition": "rebased",
+      "replacements": ["0031-example-MusicFree.patch"],
+      "upstream_commits": [],
+      "rationale": "How the old intent is represented on the new tree",
+      "approval": "REPLACE_WITH_REVIEW_REFERENCE"
+    }
+  ]
+}
+~~~
+
+<code>disposition</code> 只能是 <code>rebased</code>、<code>split</code>、<code>upstreamed</code> 或 <code>dropped</code>。<code>split</code> 必须同时列 replacement 和 upstream commit；<code>upstreamed</code> 必须列进入新 base 的 commit；<code>dropped</code> 必须有范围变更批准。用结构化编辑器完成映射后执行：
+
+~~~bash
+patch_map="$vlckit_worktree/Documentation/upgrades/$upgrade_id.patch-map.json"
+test -f "$patch_map"
+old_vlc_base=$(jq -r .libvlc.base_commit \
+  "$vlckit_repo/Config/sources.lock.json")
+jq -e \
+  --arg old "$old_vlc_base" \
+  --arg new "$new_vlc_base" \
+  '.schema_version == 1 and
+   .old_libvlc_base == $old and
+   .new_libvlc_base == $new and
+   (.entries | type == "array")' \
+  "$patch_map" >/dev/null
+test "$(jq '.entries | length' "$patch_map")" \
+  -eq "${#reviewed_musicfree_patch_identities[@]}"
+
+for identity in "${reviewed_musicfree_patch_identities[@]}"; do
+  old_patch_name=${identity%%:*}
+  old_patch_sha256=${identity#*:}
+  test "$(jq --arg name "$old_patch_name" \
+    '[.entries[] | select(.old_patch == $name)] | length' \
+    "$patch_map")" -eq 1
+  jq -e \
+    --arg name "$old_patch_name" \
+    --arg sha "$old_patch_sha256" \
+    '.entries[] | select(.old_patch == $name) |
+     .old_sha256 == $sha and
+     (.rationale | type == "string" and length > 0) and
+     (.approval | type == "string" and length > 0) and
+     .approval != "REPLACE_WITH_REVIEW_REFERENCE" and
+     (.disposition == "rebased" or
+      .disposition == "split" or
+      .disposition == "upstreamed" or
+      .disposition == "dropped") and
+     (if .disposition == "rebased" then
+        (.replacements | length > 0) and
+        (.upstream_commits | length == 0)
+      elif .disposition == "split" then
+        (.replacements | length > 0) and
+        (.upstream_commits | length > 0)
+      elif .disposition == "upstreamed" then
+        (.replacements | length == 0) and
+        (.upstream_commits | length > 0)
+      else
+        (.replacements | length == 0) and
+        (.upstream_commits | length == 0)
+      end)' "$patch_map" >/dev/null
+done
+
+map_replacements=()
+while IFS= read -r replacement; do
+  map_replacements+=("$replacement")
+done < <(jq -r '.entries[].replacements[]?' "$patch_map")
+
+# The replacement multiset must equal the generated MusicFree patch set.
+# This rejects duplicates, paths, and references to an upstream patch.
+test "${#map_replacements[@]}" \
+  -eq "${#generated_musicfree_patches[@]}"
+for replacement in "${map_replacements[@]}"; do
+  test -n "$replacement"
+  test "$replacement" = "$(basename "$replacement")"
+  replacement_matches=0
+  for generated_patch in "${generated_musicfree_patches[@]}"; do
+    if test "$replacement" = "$(basename "$generated_patch")"; then
+      replacement_matches=$((replacement_matches + 1))
+    fi
+  done
+  test "$replacement_matches" -eq 1
+  test "$(jq --arg name "$replacement" \
+    '[.entries[].replacements[]? | select(. == $name)] | length' \
+    "$patch_map")" -eq 1
+done
+
+for generated_patch in "${generated_musicfree_patches[@]}"; do
+  generated_name=$(basename "$generated_patch")
+  test "$(jq --arg name "$generated_name" \
+    '[.entries[].replacements[]? | select(. == $name)] | length' \
+    "$patch_map")" -eq 1
+done
+
+while IFS= read -r upstream_commit; do
+  git -C "$vlc_repo" cat-file -e "$upstream_commit^{commit}"
+  git -C "$vlc_repo" merge-base --is-ancestor \
+    "$upstream_commit" "$new_vlc_base"
+done < <(jq -r '.entries[].upstream_commits[]?' "$patch_map")
+
+patch_map_sha256=$(shasum -a 256 "$patch_map" | awk '{print $1}')
+printf "patch_map_sha256=%s\n" "$patch_map_sha256"
+~~~
+
+映射证明“每个旧 patch 去了哪里”；第 10 节 tree 重放和第 13 节能力门禁再证明最终语义与产物。二者缺一不可。
+
+### 9.4 更新锁定信息
 
 至少更新：
 
@@ -490,7 +703,8 @@ expected_tree=$(jq -r .libvlc.patched_tree \
   "$vlckit_worktree/Config/sources.lock.json")
 
 test "$actual_tree" = "$expected_tree"
-test -z "$(git -C "$replay_worktree" status --porcelain)"
+test -z "$(git -C "$replay_worktree" \
+  status --porcelain --untracked-files=all)"
 
 git -C "$vlc_repo" worktree remove "$replay_worktree"
 ~~~
@@ -518,7 +732,34 @@ done
 
 jq -e . "$vlckit_worktree/Config/sources.lock.json" >/dev/null
 
-# Commit the reviewed outer changes before continuing.
+git -C "$vlckit_worktree" status --short
+git -C "$vlckit_worktree" diff --name-status
+git -C "$vlckit_worktree" diff
+
+# This dedicated worktree has not built yet. Stage only after every path above
+# is identified as part of this upgrade. Split logical groups here if needed.
+git -C "$vlckit_worktree" add -A
+git -C "$vlckit_worktree" diff --cached --name-status
+git -C "$vlckit_worktree" diff --cached
+git -C "$vlckit_worktree" diff --cached --check \
+  -- . ":(exclude)libvlc/patches/*MusicFree*.patch"
+test -n "$(git -C "$vlckit_worktree" \
+  diff --cached --name-only)"
+
+staged_diff_sha256=$(git -C "$vlckit_worktree" \
+  diff --cached --binary | shasum -a 256 | awk '{print $1}')
+printf "staged_diff_sha256=%s\n" "$staged_diff_sha256"
+reviewed_staged_diff_sha256=REPLACE_WITH_APPROVED_STAGED_DIFF_SHA256
+source_review_approval=REPLACE_WITH_REVIEW_REFERENCE
+test -n "$reviewed_staged_diff_sha256"
+test "$reviewed_staged_diff_sha256" != \
+  "REPLACE_WITH_APPROVED_STAGED_DIFF_SHA256"
+test "$reviewed_staged_diff_sha256" = "$staged_diff_sha256"
+test -n "$source_review_approval"
+test "$source_review_approval" != "REPLACE_WITH_REVIEW_REFERENCE"
+git -C "$vlckit_worktree" commit \
+  -m "libvlc: migrate MusicFree audio profile to $new_vlc_base"
+
 outer_commit=$(git -C "$vlckit_worktree" rev-parse HEAD)
 vlc_commit=$(git -C "$vlc_worktree" rev-parse HEAD)
 test -z "$(git -C "$vlckit_worktree" \
@@ -548,6 +789,41 @@ test "$(git -C "$vlc_worktree" rev-parse "HEAD^{tree}")" \
 使用全新的 build/install/cache 路径，不复用 r5：
 
 ~~~bash
+evidence_root=REPLACE_WITH_EXISTING_ABSOLUTE_DURABLE_DIRECTORY
+test -n "$evidence_root"
+test "$evidence_root" != \
+  "REPLACE_WITH_EXISTING_ABSOLUTE_DURABLE_DIRECTORY"
+test -d "$evidence_root"
+evidence_root=$(cd "$evidence_root" && pwd -P)
+case "$evidence_root" in
+  /private/tmp|/private/tmp/*|/tmp|/tmp/*)
+    printf "evidence_root must not be a temporary directory: %s\n" \
+      "$evidence_root" >&2
+    exit 1
+    ;;
+esac
+
+# Evidence must survive removal of source and temporary worktrees.
+for disposable_root in \
+  "$vlckit_repo" \
+  "$vlckit_worktree" \
+  "$upstream_vlckit_worktree" \
+  "$upgrade_root"
+do
+  disposable_root=$(cd "$disposable_root" && pwd -P)
+  case "$evidence_root/" in
+    "$disposable_root/"*)
+      printf "evidence_root is inside disposable source: %s\n" \
+        "$disposable_root" >&2
+      exit 1
+      ;;
+  esac
+done
+
+first_evidence="$evidence_root/$upgrade_id/first-build"
+test ! -e "$first_evidence"
+mkdir -p "$first_evidence"
+
 build_root="$vlckit_worktree/build-audio-ios-$upgrade_id"
 cache_root="$upgrade_root/build-cache-$upgrade_id"
 vlc_build_root="$cache_root/vlc-build"
@@ -565,10 +841,15 @@ install_root="$cache_root/vlc-install"
     ./Scripts/package-release.sh
 )
 
-test -z "$(git -C "$vlckit_worktree" status --porcelain)"
-test -z "$(git -C "$vlc_worktree" status --porcelain)"
+test -z "$(git -C "$vlckit_worktree" \
+  status --porcelain --untracked-files=all)"
+test -z "$(git -C "$vlc_worktree" \
+  status --porcelain --untracked-files=all)"
 first_checksum=$(cat "$build_root/release/swiftpm-checksum.txt")
 test -n "$first_checksum"
+cp -R "$build_root/release/." "$first_evidence/"
+test -f "$first_evidence/build-manifest.json"
+test -f "$first_evidence/swiftpm-checksum.txt"
 ~~~
 
 <code>package-release.sh</code> 会生成 metadata、ZIP/checksum、合规材料并运行 SwiftPM consumer。不要在它完成之前删除 archive、DerivedData 或底层 build/install 目录。
@@ -599,6 +880,9 @@ test "$(git -C "$second_vlc_worktree" rev-parse "HEAD^{tree}")" \
 
 second_build_root="$second_vlckit_worktree/build-audio-ios-$upgrade_id-repro"
 second_cache_root="$second_root/build-cache"
+second_evidence="$evidence_root/$upgrade_id/second-build"
+test ! -e "$second_evidence"
+mkdir -p "$second_evidence"
 
 (
   cd "$second_vlckit_worktree"
@@ -619,12 +903,220 @@ test -z "$(git -C "$second_vlckit_worktree" \
   status --porcelain --untracked-files=all)"
 test -z "$(git -C "$second_vlc_worktree" \
   status --porcelain --untracked-files=all)"
+cp -R "$second_build_root/release/." "$second_evidence/"
+test -f "$second_evidence/build-manifest.json"
+test -f "$second_evidence/swiftpm-checksum.txt"
 
 printf "first=%s\nsecond=%s\n" \
   "$first_checksum" "$second_checksum"
 ~~~
 
-还要比较两次构建的架构、dSYM UUID 关系、模块 inventory、符号、系统依赖、Mach-O 大小和 manifest。把两个 source commit/tree、独立 cache 路径、checksum 和差异写入本轮升级记录及 <code>reproducibility.json</code>。若现有生成脚本不能接收这些证据，应先扩展并提交脚本，不能直接把 JSON 状态改成 passed。
+### 12.2 生成固定 schema 的复现报告
+
+checksum 相等只是一个比较项。以下报告还比较 source contract、toolchain、slice/architecture、Mach-O 与 dSYM hash/UUID/大小、静态模块、FFmpeg、符号和系统依赖。任一项不同都输出 <code>failed</code> 并终止：
+
+~~~bash
+reproducibility_report="$evidence_root/$upgrade_id/reproducibility.json"
+first_comparison_manifest="$first_evidence/build-manifest.pre-repro.json"
+second_comparison_manifest="$second_evidence/build-manifest.pre-repro.json"
+cp "$first_evidence/build-manifest.json" "$first_comparison_manifest"
+cp "$second_evidence/build-manifest.json" "$second_comparison_manifest"
+/usr/bin/env -i \
+PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+FIRST_MANIFEST="$first_comparison_manifest" \
+SECOND_MANIFEST="$second_comparison_manifest" \
+FIRST_CHECKSUM="$first_checksum" \
+SECOND_CHECKSUM="$second_checksum" \
+OUTER_COMMIT="$outer_commit" \
+PATCHED_TREE="$patched_tree" \
+FIRST_BUILD_ROOT="$build_root" \
+SECOND_BUILD_ROOT="$second_build_root" \
+FIRST_CACHE_ROOT="$cache_root" \
+SECOND_CACHE_ROOT="$second_cache_root" \
+REPORT_PATH="$reproducibility_report" \
+/usr/bin/ruby -rjson -rdigest -e '
+  def pick(hash, *keys)
+    keys.each_with_object({}) { |key, out| out[key] = hash.fetch(key) }
+  end
+
+  def canonical(value)
+    case value
+    when Hash
+      value.keys.sort.each_with_object({}) do |key, out|
+        out[key] = canonical(value.fetch(key))
+      end
+    when Array
+      value.map { |entry| canonical(entry) }
+    else
+      value
+    end
+  end
+
+  def slice_projection(slice)
+    projected = pick(
+      slice,
+      "library_identifier",
+      "architectures",
+      "supported_platform",
+      "supported_platform_variant",
+      "framework_binary_sha256",
+      "framework_binary_size_bytes",
+      "framework_size_bytes",
+      "binary_uuids",
+      "dependencies",
+      "static_module_count",
+      "static_module_sha256",
+      "symbol_audit"
+    )
+    projected["dsym"] = pick(
+      slice.fetch("dsym"),
+      "dwarf_sha256",
+      "dwarf_size_bytes",
+      "uuids",
+      "matches_binary"
+    )
+    projected
+  end
+
+  def projection(manifest)
+    source = manifest.fetch("source")
+    {
+      "profile" => manifest.fetch("profile"),
+      "source_contract" => pick(
+        source,
+        "vlckit_commit",
+        "vlckit_expected_commit",
+        "libvlc_base_commit",
+        "contrib_lock",
+        "sources_lock_sha256",
+        "audio_profile_sha256",
+        "module_policy_sha256",
+        "required_capabilities_sha256",
+        "build_script_sha256"
+      ),
+      "toolchain" => manifest.fetch("toolchain"),
+      "available_libraries" =>
+        manifest.fetch("artifact").fetch("available_libraries"),
+      "xcframework_size_bytes" =>
+        manifest.fetch("artifact").fetch("xcframework_size_bytes"),
+      "slices" => manifest.fetch("slices")
+        .map { |slice| slice_projection(slice) }
+        .sort_by { |slice| slice.fetch("library_identifier") },
+      "static_modules" => manifest.fetch("static_modules"),
+      "ffmpeg" => manifest.fetch("ffmpeg"),
+      "linkage_audit" => manifest.fetch("linkage_audit")
+    }
+  end
+
+  first_path = ENV.fetch("FIRST_MANIFEST")
+  second_path = ENV.fetch("SECOND_MANIFEST")
+  first = JSON.parse(File.read(first_path))
+  second = JSON.parse(File.read(second_path))
+  first_projection = canonical(projection(first))
+  second_projection = canonical(projection(second))
+  first_checksum = ENV.fetch("FIRST_CHECKSUM")
+  second_checksum = ENV.fetch("SECOND_CHECKSUM")
+  outer_commit = ENV.fetch("OUTER_COMMIT")
+
+  comparisons = {
+    "archive_checksum_equal" => first_checksum == second_checksum,
+    "first_manifest_archive_matches" =>
+      first.dig("release", "swiftpm_checksum") == first_checksum &&
+      first.dig("release", "archive_sha256") == first_checksum,
+    "second_manifest_archive_matches" =>
+      second.dig("release", "swiftpm_checksum") == second_checksum &&
+      second.dig("release", "archive_sha256") == second_checksum,
+    "outer_commit_equal" =>
+      first.dig("source", "vlckit_commit") == outer_commit &&
+      second.dig("source", "vlckit_commit") == outer_commit,
+    "source_worktrees_clean" =>
+      first.dig("source", "vlckit_worktree", "dirty") == false &&
+      first.dig("source", "libvlc_worktree", "dirty") == false &&
+      second.dig("source", "vlckit_worktree", "dirty") == false &&
+      second.dig("source", "libvlc_worktree", "dirty") == false,
+    "binary_and_policy_projection_equal" =>
+      first_projection == second_projection
+  }
+  status = comparisons.values.all? ? "passed" : "failed"
+  report = {
+    "schema_version" => 1,
+    "status" => status,
+    "profile" => "musicfree-audio-ios",
+    "source" => {
+      "outer_commit" => outer_commit,
+      "libvlc_patched_tree" => ENV.fetch("PATCHED_TREE")
+    },
+    "first_build" => {
+      "build_root" => ENV.fetch("FIRST_BUILD_ROOT"),
+      "cache_root" => ENV.fetch("FIRST_CACHE_ROOT"),
+      "comparison_manifest" => File.basename(first_path),
+      "manifest_sha256" => Digest::SHA256.file(first_path).hexdigest,
+      "projection_sha256" => Digest::SHA256.hexdigest(
+        JSON.generate(first_projection)
+      ),
+      "artifact_sha256" => first_checksum
+    },
+    "second_build" => {
+      "build_root" => ENV.fetch("SECOND_BUILD_ROOT"),
+      "cache_root" => ENV.fetch("SECOND_CACHE_ROOT"),
+      "comparison_manifest" => File.basename(second_path),
+      "manifest_sha256" => Digest::SHA256.file(second_path).hexdigest,
+      "projection_sha256" => Digest::SHA256.hexdigest(
+        JSON.generate(second_projection)
+      ),
+      "artifact_sha256" => second_checksum
+    },
+    "comparisons" => comparisons
+  }
+  File.write(ENV.fetch("REPORT_PATH"), JSON.pretty_generate(report) + "\n")
+  abort "reproducibility comparison failed" unless status == "passed"
+'
+
+jq -e \
+  --arg outer "$outer_commit" \
+  --arg tree "$patched_tree" \
+  '.schema_version == 1 and .status == "passed" and
+   .source.outer_commit == $outer and
+   .source.libvlc_patched_tree == $tree and
+   all(.comparisons[]; . == true)' \
+  "$reproducibility_report" >/dev/null
+reproducibility_sha256=$(shasum -a 256 "$reproducibility_report" \
+  | awk '{print $1}')
+
+cp "$reproducibility_report" \
+  "$build_root/release/reproducibility.json"
+cp "$reproducibility_report" \
+  "$second_build_root/release/reproducibility.json"
+
+MUSICFREE_VLCKIT_BUILD_ROOT="$build_root" \
+MUSICFREE_VLCKIT_RELEASE_ROOT="$build_root/release" \
+  "$vlckit_worktree/Scripts/generate-build-metadata.sh"
+MUSICFREE_VLCKIT_BUILD_ROOT="$second_build_root" \
+MUSICFREE_VLCKIT_RELEASE_ROOT="$second_build_root/release" \
+  "$second_vlckit_worktree/Scripts/generate-build-metadata.sh"
+
+for manifest in \
+  "$build_root/release/build-manifest.json" \
+  "$second_build_root/release/build-manifest.json"
+do
+  jq -e \
+    '.validation.second_clean_build_reproducibility == "passed"' \
+    "$manifest" >/dev/null
+done
+
+cp -R "$build_root/release/." "$first_evidence/"
+cp -R "$second_build_root/release/." "$second_evidence/"
+printf "%s  reproducibility.json\n" "$reproducibility_sha256" \
+  > "$evidence_root/$upgrade_id/reproducibility.sha256"
+test "$(shasum -a 256 "$first_evidence/reproducibility.json" \
+  | awk '{print $1}')" = "$reproducibility_sha256"
+test "$(shasum -a 256 "$second_evidence/reproducibility.json" \
+  | awk '{print $1}')" = "$reproducibility_sha256"
+~~~
+
+该 schema 的 projection 是复现性契约；新版 manifest 增删影响二进制或策略的字段时，必须同步 Review projection，不能让新字段落在比较之外。报告中的绝对 build/cache 路径只用于证明两次隔离，不作为可重现输入。
+
+<code>release/</code> 之外若有 manifest 引用的 build log、module inventory 或原始审计文件，也必须复制到对应 evidence 目录并保存 hash。清理前对上述两个 evidence 目录及 reproducibility report 做存在性和 hash 检查；临时 worktree 中的副本不是交接位置。
 
 结果不同必须记录差异来源并保持 blocked。<code>package-release.sh</code> 负责归一化 ZIP metadata；这不等于允许忽略二进制内容差异。
 
@@ -640,6 +1132,134 @@ printf "first=%s\nsecond=%s\n" \
 - 真机矩阵：设备型号、iOS build、连接方式、音频路由和电源/网络条件。
 - 零联网证据方法：受控抓包、运行时拒绝 harness 或二者组合；记录观察接口、时间窗口、过滤条件、原始日志 hash 和判定人。
 - 体积/性能基线：上一实际发布版同架构 Mach-O、启动/首播、CPU、内存、功耗测量方法。
+
+门禁与持久证据的固定映射如下。表中“当前无 runner”不是让 agent 自行猜命令，而是明确 blocker：必须先提交可 Review 的 harness/操作规程，或保持 <code>blocked</code>。
+
+| Gate | Producer | Required durable evidence |
+| --- | --- | --- |
+| 静态模块/符号/依赖/header | <code>package-release.sh</code> -> <code>generate-build-metadata.sh</code> | <code>build-manifest.json</code>、<code>module-inventory.json</code>、<code>internal-video-symbol-audit.json</code> |
+| SwiftPM 本地资产 consumer | <code>package-release.sh</code> -> <code>verify-swiftpm-consumer.sh</code> | <code>swiftpm-consumer.json</code> 和 build log hash |
+| 二次干净构建 | 第 12.2 节固定 projection 比较 | <code>reproducibility.json</code> 与 <code>reproducibility.sha256</code> |
+| 11 类格式 | 当前无仓库 runner；必须提供锁定 fixtures 和真机 harness | <code>format-matrix.json</code>，每行 fixture SHA-256、各检查结果和原始日志 hash |
+| 协议矩阵 | 当前无仓库 runner；必须提供受控服务 manifest 和真机 harness | <code>network-protocol-matrix.json</code>，每行服务配置 hash、成功/失败检查和抓包/日志 hash |
+| 无 grant 零联网 | 当前无仓库 runner；必须提供抓包或网络拒绝 harness | <code>zero-network-evidence.json</code>，每个场景的观察窗口、接口、capture hash 和空连接列表 |
+| 真机/后台/路由/长播 | 当前无仓库 runner；必须提供设备操作规程 | <code>physical-device.json</code>，设备/iOS/audio route、逐项结果和日志 hash |
+| 体积/性能/功耗 | 当前只生成 Mach-O 体积对比；其余无 runner | <code>performance.json</code>，基线/候选方法、样本、结果和原始数据 hash |
+| SBOM/LGPL/法律 | <code>generate-compliance.sh</code> 加对应源码、重链接材料和审批输入 | <code>compliance.json</code>、SBOM、licenses、source bundle/relink hash 和法律 Review reference |
+
+当前 <code>generate-compliance.sh</code> 会有意生成 <code>generated-unreviewed</code>，且把 source provenance、relink material 和 legal review 保持为开放状态；这只够工程预发布。第一次生产升级必须先让脚本消费维护者或法务提供的结构化审批输入，生成 <code>legal-review.json</code>，并把它与准确的 outer commit、patched tree、产物、<code>compliance.json</code> 和 SBOM hash 绑定。agent 不得自行把审批状态改成 passed，也不得直接编辑 release 目录伪造通过。
+
+生产候选的最小审批数据契约如下；所有 hash 都必须来自完成两次干净构建后冻结的候选。审批报告是外部 Review 的机器可读副本，不是 agent 自批结果：
+
+~~~json
+{
+  "schema_version": 1,
+  "status": "approved",
+  "approval_reference": "REPLACE_WITH_LEGAL_REVIEW_REFERENCE",
+  "approver": "reviewer identity",
+  "approved_at": "ISO-8601 timestamp",
+  "scope": {
+    "outer_commit": "40-character commit",
+    "libvlc_patched_tree": "40-character tree",
+    "artifact_sha256": "64-character sha256",
+    "compliance_json_sha256": "64-character sha256",
+    "sbom_sha256": "64-character sha256"
+  }
+}
+~~~
+
+生产候选 workflow 必须把已批准的报告作为不可变输入，断言 CI 重建 ZIP 与 <code>scope.artifact_sha256</code> 相同，再把报告放入 compliance archive。工程预发布没有批准报告时保持法律 gate 为 open，不能借用另一候选的报告。
+
+所有缺失 runner 和 schema 扩展必须在构建源码 commit 中实现；禁止在 release 目录手填 <code>passed</code>。生产候选在发布前至少执行以下机器断言：
+
+~~~bash
+release_dir="$build_root/release"
+runtime_reports=(
+  format-matrix.json
+  network-protocol-matrix.json
+  zero-network-evidence.json
+  physical-device.json
+)
+for report in "${runtime_reports[@]}"; do
+  jq -e \
+    '.schema_version == 1 and
+     .status == "passed" and .claimable == true' \
+    "$release_dir/$report" >/dev/null
+done
+
+jq -e \
+  '.schema_version == 1 and .status == "passed" and
+   .package_dump == "passed" and .swift_build == "passed" and
+   .ios_link == "passed" and
+   .checksum_matches_archive_sha256 == true' \
+  "$release_dir/swiftpm-consumer.json" >/dev/null
+jq -e \
+  '.schema_version == 1 and .status == "passed" and
+   all(.comparisons[]; . == true)' \
+  "$release_dir/reproducibility.json" >/dev/null
+
+required_compliance_gates=(
+  sbom_generated
+  license_texts_collected
+  source_provenance
+  relink_material
+  legal_review
+)
+jq -e \
+  '.schema_version == 1 and .status == "passed" and
+   (.gates | type == "object") and
+   all(.gates[]; . == "passed")' \
+  "$release_dir/compliance.json" >/dev/null
+for gate in "${required_compliance_gates[@]}"; do
+  jq -e --arg gate "$gate" \
+    '.gates[$gate] == "passed"' \
+    "$release_dir/compliance.json" >/dev/null
+done
+
+legal_review_report="$release_dir/legal-review.json"
+test -f "$legal_review_report"
+compliance_json_sha256=$(shasum -a 256 \
+  "$release_dir/compliance.json" | awk '{print $1}')
+sbom_sha256=$(shasum -a 256 \
+  "$release_dir/sbom.spdx.json" | awk '{print $1}')
+jq -e \
+  --arg outer "$outer_commit" \
+  --arg tree "$patched_tree" \
+  --arg artifact "$first_checksum" \
+  --arg compliance "$compliance_json_sha256" \
+  --arg sbom "$sbom_sha256" \
+  '.schema_version == 1 and .status == "approved" and
+   (.approval_reference | type == "string" and length > 0) and
+   .approval_reference != "REPLACE_WITH_LEGAL_REVIEW_REFERENCE" and
+   (.approver | type == "string" and length > 0) and
+   (.approved_at | type == "string" and length > 0) and
+   .scope.outer_commit == $outer and
+   .scope.libvlc_patched_tree == $tree and
+   .scope.artifact_sha256 == $artifact and
+   .scope.compliance_json_sha256 == $compliance and
+   .scope.sbom_sha256 == $sbom' \
+  "$legal_review_report" >/dev/null
+legal_review_sha256=$(shasum -a 256 \
+  "$legal_review_report" | awk '{print $1}')
+legal_review_evidence="$evidence_root/$upgrade_id/legal-review"
+test ! -e "$legal_review_evidence"
+mkdir -p "$legal_review_evidence"
+cp "$legal_review_report" "$legal_review_evidence/legal-review.json"
+printf "%s  legal-review.json\n" "$legal_review_sha256" \
+  > "$legal_review_evidence/legal-review.sha256"
+(
+  cd "$legal_review_evidence"
+  shasum -a 256 -c legal-review.sha256
+)
+jq -e \
+  '.schema_version == 1 and .release_ready == true and
+   .validation.static_release_audit == "passed" and
+   .validation.second_clean_build_reproducibility == "passed"' \
+  "$release_dir/build-manifest.json" >/dev/null
+test -f "$release_dir/performance.json"
+jq -e '.schema_version == 1 and .status == "passed"' \
+  "$release_dir/performance.json" >/dev/null
+~~~
 
 通过标准必须是机器可判断或人工步骤明确：
 
@@ -712,6 +1332,25 @@ workflow 当前只 push tag，不把 manifest commit push 回 upgrade branch。�
 发布脚本和 workflow 必须先进入 <code>outer_commit</code>；仅存在于某个 dirty 工作树不算可执行发布链：
 
 ~~~bash
+publication_purpose=REPLACE_WITH_PUBLICATION_PURPOSE
+case "$publication_purpose" in
+  engineering-pre-release|production-candidate)
+    ;;
+  *)
+    printf "invalid publication purpose: %s\n" \
+      "$publication_purpose" >&2
+    exit 1
+    ;;
+esac
+if test "$publication_purpose" = "production-candidate"; then
+  test -n "${legal_review_sha256:-}"
+  test -f "$legal_review_evidence/legal-review.json"
+  (
+    cd "$legal_review_evidence"
+    shasum -a 256 -c legal-review.sha256
+  )
+fi
+
 release_files=(
   Package.swift
   Scripts/package-release.sh
@@ -739,13 +1378,62 @@ do
   bash -n "$vlckit_worktree/$release_script"
 done
 
+package_preflight="$upgrade_root/package-preflight.json"
 (
   cd "$vlckit_worktree"
-  swift package dump-package --disable-sandbox >/dev/null
+  swift package dump-package --disable-sandbox \
+    > "$package_preflight"
 )
+jq -e \
+  '[.targets[] | select(.name == "VLCKit" and .type == "binary")] |
+   length == 1' "$package_preflight" >/dev/null
+
+artifact_platforms=$(plutil -extract AvailableLibraries json -o - \
+  "$build_root/iOS/VLCKit.xcframework/Info.plist" \
+  | jq -r '.[].SupportedPlatform' | sort -u | tr '\n' ' ')
+manifest_platforms=$(jq -r '.platforms[].platformName' \
+  "$package_preflight" | sort -u | tr '\n' ' ')
+test "$manifest_platforms" = "$artifact_platforms"
+
+required_ios_version=$(
+  /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    /usr/bin/ruby -ryaml -e \
+      'puts YAML.load_file(ARGV.fetch(0)).fetch("deployment_target")' \
+      "$vlckit_worktree/Config/required-capabilities.yml"
+)
+manifest_ios_version=$(jq -r \
+  '.platforms[] | select(.platformName == "ios") | .version' \
+  "$package_preflight")
+test "$manifest_ios_version" = "$required_ios_version"
+
+publish_origin=$(git -C "$vlckit_worktree" remote get-url origin)
+publish_repository=$(
+  cd "$vlckit_worktree"
+  gh repo view --json nameWithOwner --jq .nameWithOwner
+)
+printf "publish_origin=%s\npublish_repository=%s\n" \
+  "$publish_origin" "$publish_repository"
+gh auth status
+reviewed_publish_repository=REPLACE_WITH_APPROVED_OWNER_AND_REPOSITORY
+publication_approval=REPLACE_WITH_PUBLICATION_APPROVAL_REFERENCE
+test -n "$reviewed_publish_repository"
+test "$reviewed_publish_repository" != \
+  "REPLACE_WITH_APPROVED_OWNER_AND_REPOSITORY"
+test "$publish_repository" = "$reviewed_publish_repository"
+test -n "$publication_approval"
+test "$publication_approval" != \
+  "REPLACE_WITH_PUBLICATION_APPROVAL_REFERENCE"
+
+# After the authorized branch push, prove that CI will build outer_commit.
+release_branch=$(git -C "$vlckit_worktree" branch --show-current)
+test -n "$release_branch"
+git -C "$vlckit_worktree" fetch origin "$release_branch"
+remote_release_commit=$(git -C "$vlckit_worktree" \
+  rev-parse "FETCH_HEAD^{commit}")
+test "$remote_release_commit" = "$outer_commit"
 ~~~
 
-然后人工 Review <code>Package.swift</code>：Swift tools version、最低 iOS、product/target 名称和 binary target 必须与新产物一致。上游通用 manifest 当前可能声明多个 Apple 平台，但 MusicFree 音频 XCFramework 只有 iOS slice；发布前必须修正这种能力声明偏差，不能仅以 <code>dump-package</code> 能解析作为通过。
+先确认 <code>publish_origin</code>/<code>publish_repository</code> 是本轮获准发布的 MusicFree 仓库，GitHub 身份具有 workflow、tag 和 release 权限；不能因 remote 名为 <code>origin</code> 就默认正确。然后人工 Review <code>Package.swift</code>：Swift tools version、最低 iOS、product/target 名称和 binary target 必须与新产物一致。上游通用 manifest 当前可能声明多个 Apple 平台，但 MusicFree 音频 XCFramework 只有 iOS slice；发布前必须修正这种能力声明偏差，不能仅以 <code>dump-package</code> 能解析作为通过。
 
 tag 使用不可复用的 SemVer pre-release，例如 <code>4.0.0-audio.20260814.1</code>。发布前确认目标 tag 和 release 都不存在、upgrade branch 已 push 且远端 commit 与 <code>outer_commit</code> 相同。push 分支、触发 workflow、创建 tag/release 都是外部发布动作，需要维护者明确授权。
 
@@ -764,12 +1452,27 @@ pre-release 工程候选不得运行这条断言后假装通过；应在升级�
 
 1. 验证 pre-release tag 格式，并拒绝已存在的 tag/release。
 2. 记录并检查 Xcode/iOS SDK，然后从 clean checkout 完整构建。
-3. 用固定资产名 <code>MusicFreeVLCKit.xcframework.zip</code> 打包，计算 checksum，运行 SwiftPM consumer 并生成合规 archive。
+3. 用固定资产名 <code>MusicFreeVLCKit.xcframework.zip</code> 打包，计算 checksum，运行 SwiftPM consumer，生成合规 archive，并把该 tarball 的 SHA-256 与 basename 单独写入 <code>compliance-checksums.txt</code>。
 4. 用最终 tag、资产名和 checksum 更新 <code>Package.swift</code>，再通过结构化 <code>swift package dump-package</code> 验证 URL/checksum。
 5. 拒绝除 <code>Package.swift</code> 外的 tracked file 变化；创建 manifest-only commit 和 annotated tag，只 push 该 tag。
-6. 先创建 draft pre-release，上传 ZIP、checksum、SHA-256 和合规 archive，最后取消 draft。
+6. 先创建 draft pre-release，上传 ZIP、checksum、SHA-256、合规 archive 和 <code>compliance-checksums.txt</code>，最后执行等价于 <code>gh release edit --draft=false</code> 的操作，将它发布为仍标记 <code>prerelease=true</code> 的非 draft release。
 
-若新版上游改变 Package/target 布局、Xcode runner、构建入口或 release asset 结构，先修改并 Review workflow，再触发发布。不能在 workflow 中用正则误匹配后静默改错 target，也不能绕过空 consumer、合规打包或远端唯一性检查。
+当前 r5 workflow 尚未发布 <code>compliance-checksums.txt</code>，所以下一次升级必须先用单独提交补上生成、上传和失败测试，再触发发布。若新版上游改变 Package/target 布局、Xcode runner、构建入口或 release asset 结构，也要先修改并 Review workflow。不能在 workflow 中用正则误匹配后静默改错 target，也不能绕过空 consumer、合规打包或远端唯一性检查。
+
+workflow 生成的 checksum 文件固定为一行 <code>&lt;sha256&gt;  &lt;basename&gt;</code>，不能写 runner 绝对路径：
+
+~~~bash
+compliance_basename=$(basename "$compliance_archive")
+compliance_archive_sha256=$(shasum -a 256 \
+  "$compliance_archive" | awk '{print $1}')
+test -n "$compliance_archive_sha256"
+printf "%s  %s\n" \
+  "$compliance_archive_sha256" "$compliance_basename" \
+  > "$RELEASE_ROOT/compliance-checksums.txt"
+test "$(awk 'NR == 1 {print $1}' \
+  "$RELEASE_ROOT/compliance-checksums.txt")" \
+  = "$compliance_archive_sha256"
+~~~
 
 workflow 在 tag push 后失败时，不移动、不覆盖、也不复用已发布 tag。保存失败 run 和残留远端状态，修复后使用递增的新 pre-release tag。
 
@@ -779,6 +1482,12 @@ workflow 绿色只证明 CI 步骤返回成功。还必须从远端 tag 和 rele
 
 ~~~bash
 release_tag=REPLACE_WITH_PUBLISHED_PRERELEASE
+test -n "$release_tag"
+test "$release_tag" != "REPLACE_WITH_PUBLISHED_PRERELEASE"
+workflow_run_url=REPLACE_WITH_COMPLETED_WORKFLOW_RUN_URL
+test -n "$workflow_run_url"
+test "$workflow_run_url" != \
+  "REPLACE_WITH_COMPLETED_WORKFLOW_RUN_URL"
 release_verify_root=$(mktemp -d \
   /private/tmp/musicfree-vlckit-release-verify.XXXXXX)
 tag_worktree="$release_verify_root/source"
@@ -808,10 +1517,71 @@ mkdir -p "$release_verify_root/assets"
   gh release download "$release_tag" \
     --pattern MusicFreeVLCKit.xcframework.zip \
     --dir "$release_verify_root/assets"
+  gh release download "$release_tag" \
+    --pattern swiftpm-checksum.txt \
+    --pattern checksums.txt \
+    --pattern compliance-checksums.txt \
+    --pattern "MusicFreeVLCKit-compliance-$release_tag.tar.gz" \
+    --dir "$release_verify_root/assets"
 )
 
 remote_archive="$release_verify_root/assets/MusicFreeVLCKit.xcframework.zip"
 remote_checksum=$(swift package compute-checksum "$remote_archive")
+remote_archive_sha256=$(shasum -a 256 "$remote_archive" \
+  | awk '{print $1}')
+remote_archive_bytes=$(wc -c < "$remote_archive" | tr -d " ")
+published_checksum=$(tr -d '\r\n' \
+  < "$release_verify_root/assets/swiftpm-checksum.txt")
+published_sha256=$(awk 'NR == 1 {print $1}' \
+  "$release_verify_root/assets/checksums.txt")
+compliance_archive="$release_verify_root/assets/MusicFreeVLCKit-compliance-$release_tag.tar.gz"
+test -s "$compliance_archive"
+compliance_sha256=$(shasum -a 256 "$compliance_archive" \
+  | awk '{print $1}')
+published_compliance_sha256=$(awk 'NR == 1 {print $1}' \
+  "$release_verify_root/assets/compliance-checksums.txt")
+published_compliance_name=$(awk 'NR == 1 {print $2}' \
+  "$release_verify_root/assets/compliance-checksums.txt" \
+  | sed 's/^\*//')
+unzip -Z1 "$remote_archive" \
+  > "$release_verify_root/remote-archive-files.txt"
+grep -Eq \
+  '^VLCKit\.xcframework/LICENSES/third-party-licenses/[^/]+$' \
+  "$release_verify_root/remote-archive-files.txt"
+for packaged_compliance_file in \
+  VLCKit.xcframework/LICENSES/THIRD-PARTY-NOTICES.md \
+  VLCKit.xcframework/LICENSES/LICENSE-STATUS.md \
+  VLCKit.xcframework/LICENSES/RELINKING.md \
+  VLCKit.xcframework/LICENSES/compliance.json \
+  VLCKit.xcframework/LICENSES/sbom.spdx.json
+do
+  grep -Fxq "$packaged_compliance_file" \
+    "$release_verify_root/remote-archive-files.txt"
+done
+tar -tzf "$compliance_archive" \
+  > "$release_verify_root/compliance-archive-files.txt"
+for compliance_file in \
+  ./THIRD-PARTY-NOTICES.md \
+  ./LICENSE-STATUS.md \
+  ./RELINKING.md \
+  ./compliance.json \
+  ./sbom.spdx.json
+do
+  grep -Fxq "$compliance_file" \
+    "$release_verify_root/compliance-archive-files.txt"
+done
+if test "$publication_purpose" = "production-candidate"; then
+  grep -Fxq ./legal-review.json \
+    "$release_verify_root/compliance-archive-files.txt"
+  tar -xOf "$compliance_archive" ./legal-review.json \
+    > "$release_verify_root/remote-legal-review.json"
+  remote_legal_review_sha256=$(shasum -a 256 \
+    "$release_verify_root/remote-legal-review.json" \
+    | awk '{print $1}')
+  test "$remote_legal_review_sha256" = "$legal_review_sha256"
+  jq -e '.schema_version == 1 and .status == "approved"' \
+    "$release_verify_root/remote-legal-review.json" >/dev/null
+fi
 manifest_checksum=$(jq -r \
   '.targets[] | select(.name == "VLCKit") | .checksum' \
   "$release_verify_root/package.json")
@@ -824,15 +1594,143 @@ release_repository=$(
 )
 expected_url="https://github.com/$release_repository/releases/download/$release_tag/MusicFreeVLCKit.xcframework.zip"
 
+test "$remote_checksum" = "$remote_archive_sha256"
+test "$remote_checksum" = "$published_checksum"
+test "$remote_checksum" = "$published_sha256"
 test "$remote_checksum" = "$manifest_checksum"
+test "$remote_checksum" = "$first_checksum"
 test "$manifest_url" = "$expected_url"
+test "$remote_archive_bytes" -gt 0
+test "$published_compliance_name" = \
+  "$(basename "$compliance_archive")"
+test "$compliance_sha256" = "$published_compliance_sha256"
 jq -e \
   --arg tag "$release_tag" \
   '.tagName == $tag and .isDraft == false and .isPrerelease == true' \
   "$release_verify_root/release.json" >/dev/null
 ~~~
 
-还要下载并核对 <code>swiftpm-checksum.txt</code>、<code>checksums.txt</code> 和 compliance archive，随后用远端 repository + exact tag 建立一个全新 consumer 做 import/link。将 workflow run URL/ID、<code>outer_commit</code>、<code>tag_commit</code>、release URL、远端 ZIP 字节数/SHA-256/checksum、合规 archive hash 和 consumer 结果写入升级记录。
+随后用远端 repository + exact tag 建立全新 iOS consumer；不能复用本地 path-based consumer 或已下载的 XCFramework：
+
+~~~bash
+remote_consumer_root="$release_verify_root/remote-consumer"
+mkdir -p \
+  "$remote_consumer_root/Sources/Consumer" \
+  "$remote_consumer_root/ModuleCache"
+cp "$tag_worktree/Tests/SwiftPMConsumer/Sources/Consumer/Consumer.swift" \
+  "$remote_consumer_root/Sources/Consumer/Consumer.swift"
+consumer_ios_version=$(
+  /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    /usr/bin/ruby -ryaml -e \
+      'puts YAML.load_file(ARGV.fetch(0)).fetch("deployment_target")' \
+      "$tag_worktree/Config/required-capabilities.yml"
+)
+test -n "$consumer_ios_version"
+
+/usr/bin/env -i \
+PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+RELEASE_REPOSITORY="$release_repository" \
+RELEASE_TAG="$release_tag" \
+IOS_DEPLOYMENT_TARGET="$consumer_ios_version" \
+/usr/bin/ruby - "$remote_consumer_root/Package.swift" <<'RUBY'
+repository = ENV.fetch("RELEASE_REPOSITORY")
+tag = ENV.fetch("RELEASE_TAG")
+deployment_target = ENV.fetch("IOS_DEPLOYMENT_TARGET")
+identity = repository.split("/").last.downcase
+manifest = <<~SWIFT
+  // swift-tools-version: 5.9
+  import PackageDescription
+
+  let package = Package(
+      name: "MusicFreeVLCKitRemoteConsumer",
+      platforms: [.iOS("#{deployment_target}")],
+      products: [
+          .executable(
+              name: "MusicFreeVLCKitRemoteConsumer",
+              targets: ["MusicFreeVLCKitRemoteConsumer"]
+          )
+      ],
+      dependencies: [
+          .package(
+              url: "https://github.com/#{repository}.git",
+              exact: "#{tag}"
+          )
+      ],
+      targets: [
+          .executableTarget(
+              name: "MusicFreeVLCKitRemoteConsumer",
+              dependencies: [
+                  .product(name: "VLCKit", package: "#{identity}")
+              ],
+              path: "Sources/Consumer"
+          )
+      ]
+  )
+SWIFT
+File.write(ARGV.fetch(0), manifest)
+RUBY
+
+(
+  cd "$remote_consumer_root"
+  SWIFT_MODULECACHE_PATH="$remote_consumer_root/ModuleCache" \
+  CLANG_MODULE_CACHE_PATH="$remote_consumer_root/ModuleCache" \
+    swift package resolve --disable-sandbox \
+      > "$release_verify_root/remote-consumer-resolve.log" 2>&1
+  SWIFT_MODULECACHE_PATH="$remote_consumer_root/ModuleCache" \
+  CLANG_MODULE_CACHE_PATH="$remote_consumer_root/ModuleCache" \
+    swift build --disable-sandbox --configuration release \
+      --triple "arm64-apple-ios$consumer_ios_version" \
+      --sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+      --product MusicFreeVLCKitRemoteConsumer \
+      > "$release_verify_root/remote-consumer-build.log" 2>&1
+)
+
+package_identity=$(printf "%s" "$release_repository" \
+  | awk -F/ '{print tolower($NF)}')
+jq -e \
+  --arg identity "$package_identity" \
+  --arg tag "$release_tag" \
+  --arg revision "$tag_commit" \
+  '.pins[] | select(.identity == $identity) |
+    .state.version == $tag and .state.revision == $revision' \
+  "$remote_consumer_root/Package.resolved" >/dev/null
+test -f "$remote_consumer_root/.build/arm64-apple-ios/release/MusicFreeVLCKitRemoteConsumer"
+
+remote_release_evidence="$evidence_root/$upgrade_id/remote-release"
+test ! -e "$remote_release_evidence"
+mkdir -p "$remote_release_evidence"
+cp "$release_verify_root/package.json" \
+  "$release_verify_root/release.json" \
+  "$release_verify_root/remote-consumer-resolve.log" \
+  "$release_verify_root/remote-consumer-build.log" \
+  "$release_verify_root/remote-archive-files.txt" \
+  "$release_verify_root/compliance-archive-files.txt" \
+  "$remote_consumer_root/Package.resolved" \
+  "$release_verify_root/assets/swiftpm-checksum.txt" \
+  "$release_verify_root/assets/checksums.txt" \
+  "$release_verify_root/assets/compliance-checksums.txt" \
+  "$remote_release_evidence/"
+printf "archive_bytes=%s\narchive_sha256=%s\ncompliance_sha256=%s\n" \
+  "$remote_archive_bytes" \
+  "$remote_archive_sha256" \
+  "$compliance_sha256" \
+  > "$remote_release_evidence/remote-assets.txt"
+if test "$publication_purpose" = "production-candidate"; then
+  cp "$release_verify_root/remote-legal-review.json" \
+    "$remote_release_evidence/"
+  printf "legal_review_sha256=%s\n" "$remote_legal_review_sha256" \
+    >> "$remote_release_evidence/remote-assets.txt"
+fi
+release_url=$(jq -r .url "$release_verify_root/release.json")
+printf "outer_commit=%s\ntag_commit=%s\nworkflow_run=%s\nrelease_url=%s\n" \
+  "$outer_commit" \
+  "$tag_commit" \
+  "$workflow_run_url" \
+  "$release_url" \
+  >> "$remote_release_evidence/remote-assets.txt"
+~~~
+
+将 workflow run URL/ID、<code>outer_commit</code>、<code>tag_commit</code>、release URL、远端 ZIP 字节数/SHA-256/checksum、合规 archive hash 和 remote consumer 结果写入升级记录。远端 ZIP 已与 <code>first_evidence</code> 中持久保存的 ZIP 做 checksum 等值断言，因此无需再保存第三份同字节副本；远端 compliance tar 必须与 CI 独立发布的 <code>compliance-checksums.txt</code> 等值，不能用下载后现场计算出的 hash 自证。<code>remote_release_evidence</code> 是本地交接副本。
 
 验证完成后，先移除 <code>tag_worktree</code>，再按第 18 节原则处理临时目录。任何资产内容变化都必须使用新 tag；禁止替换同名 ZIP 后只更新 checksum。
 
@@ -866,14 +1764,18 @@ jq -e \
 - New libVLC base:
 - Upstream tags/refs:
 - Selection reason:
+- Target/source-pair approval references:
 
 ## Patch Stack
 
 - Upstream VLCKit patch count:
+- Upstream patch driver SHA-256 / mechanism approval reference:
 - MusicFree patch files:
+- Commit/patch scope approval references:
 - Final patch count:
 - Patched tree:
-- Upstreamed/dropped patches:
+- Patch map path/SHA-256:
+- Rebased/split/upstreamed/dropped counts:
 
 ## Conflict Decisions
 
@@ -883,16 +1785,20 @@ jq -e \
 ## Build
 
 - Clean source commits:
+- Reviewed staged diff SHA-256 / approval reference:
 - Xcode/SDK/deployment target:
 - Build command:
 - First artifact checksum:
 - Second artifact checksum:
+- Durable evidence root:
+- Reproducibility report/SHA-256:
 - Device Mach-O bytes:
 - XCFramework/ZIP bytes:
 
 ## SwiftPM Publication
 
 - Publication purpose: engineering pre-release / production candidate
+- Publication approval reference:
 - Source outer commit:
 - Tag manifest commit:
 - Manifest-only diff verified:
@@ -900,7 +1806,8 @@ jq -e \
 - Workflow run URL/ID:
 - Release URL:
 - Remote archive bytes/SHA-256/SwiftPM checksum:
-- Compliance archive SHA-256:
+- Compliance archive calculated/published SHA-256:
+- Legal review report/reference/hash (production only):
 - Remote exact-tag consumer result:
 - Package platforms match artifact slices:
 
@@ -938,6 +1845,8 @@ jq -e \
 - Artifact/release path:
 - Remote tag/release and immutable asset URL:
 - Source commit vs tag manifest commit:
+- Cleanup approval reference:
+- Temporary roots removed / retained with reason:
 - Commands already run:
 - Commands not run:
 ~~~
@@ -975,6 +1884,81 @@ jq -e \
 
 升级完成或放弃后，先确认需要的 commits、patches、logs、两次构建 evidence 和 release artifacts 已保存到 worktree 外部。执行 <code>git status</code>，如果仍有 <code>cherry-pick</code> 或 <code>am</code> sequencer，先明确选择 continue 或 abort；不能靠删除目录结束。
 
+完成了两次构建时先验证持久证据。若尚未开始构建，中止升级必须在升级记录写明没有产物可保留；若任一 build root 已创建但复现报告尚未通过，先把部分日志、产物 inventory、hash 和保留路径写入持久证据，不能把它描述成“没有产物”。下面的自动清理会拒绝删除这种部分构建，后续必须单独 Review 精确路径和部分证据后再清理：
+
+~~~bash
+build_cleanup_evidence_verified=false
+if test -n "${build_root:-}" || \
+   test -n "${second_build_root:-}"; then
+  test -n "${build_root:-}"
+  test -n "${second_build_root:-}"
+  test -n "${reproducibility_report:-}"
+  upgrade_evidence="$evidence_root/$upgrade_id"
+  test -f "$upgrade_evidence/reproducibility.json"
+  test -f "$upgrade_evidence/reproducibility.sha256"
+  (
+    cd "$upgrade_evidence"
+    shasum -a 256 -c reproducibility.sha256
+  )
+  jq -e '.status == "passed" and all(.comparisons[]; . == true)' \
+    "$upgrade_evidence/reproducibility.json" >/dev/null
+  test -f "$upgrade_evidence/first-build/build-manifest.json"
+  test -f "$upgrade_evidence/second-build/build-manifest.json"
+  build_cleanup_evidence_verified=true
+fi
+if test -n "${remote_release_evidence:-}"; then
+  test -f "$remote_release_evidence/remote-assets.txt"
+  test -f "$remote_release_evidence/Package.resolved"
+  test -f "$remote_release_evidence/remote-consumer-build.log"
+  if test "${publication_purpose:-}" = "production-candidate"; then
+    test -f "$remote_release_evidence/remote-legal-review.json"
+    test "$(shasum -a 256 \
+      "$remote_release_evidence/remote-legal-review.json" \
+      | awk '{print $1}')" = "$legal_review_sha256"
+  fi
+fi
+if test -n "${legal_review_evidence:-}"; then
+  test -f "$legal_review_evidence/legal-review.json"
+  test -f "$legal_review_evidence/legal-review.sha256"
+  (
+    cd "$legal_review_evidence"
+    shasum -a 256 -c legal-review.sha256
+  )
+fi
+
+cleanup_approval=REPLACE_WITH_CLEANUP_APPROVAL_REFERENCE
+test -n "$cleanup_approval"
+test "$cleanup_approval" != \
+  "REPLACE_WITH_CLEANUP_APPROVAL_REFERENCE"
+
+# Remove only generated build roots whose evidence was verified above.
+generated_build_roots=(
+  "${build_root:-}"
+  "${second_build_root:-}"
+)
+for generated_root in "${generated_build_roots[@]}"; do
+  test -n "$generated_root" || continue
+  test "$build_cleanup_evidence_verified" = true
+  case "$generated_root" in
+    "${vlckit_worktree:-/__unset__}"/build-audio-ios-*|\
+    "${second_vlckit_worktree:-/__unset__}"/build-audio-ios-*)
+      ;;
+    *)
+      printf "refusing unexpected build root: %s\n" \
+        "$generated_root" >&2
+      exit 1
+      ;;
+  esac
+  test -d "$generated_root"
+  test ! -L "$generated_root"
+  du -sh "$generated_root"
+  rm -rf -- "$generated_root"
+  test ! -e "$generated_root"
+done
+~~~
+
+该代码块失败后不得跳到 worktree remove 或临时根目录删除步骤；build root 通常位于 worktree 内，绕过前置断言仍会间接丢失部分构建证据。
+
 先列出 Git 已登记的 worktree：
 
 ~~~bash
@@ -1004,7 +1988,53 @@ git -C "$vlckit_repo" worktree remove "$upstream_vlckit_worktree"
 git -C "$vlckit_repo" worktree remove "$vlckit_worktree"
 ~~~
 
-若某路径已经在前面移除，不要重复执行对应命令。<code>worktree remove</code> 拒绝时先检查未提交、未跟踪或 ignored artifact，不使用 <code>--force</code> 绕过。外部 cache/temp root 只有在精确确认路径、release evidence 已转存并获得清理授权后才能删除。
+若某路径已经在前面移除，不要重复执行对应命令。<code>worktree remove</code> 拒绝时先检查 <code>git status --short --ignored</code> 和 <code>git clean -ndX</code> 的预览，不使用 <code>--force</code> 绕过，也不直接执行 <code>git clean</code>。
+
+所有 worktree 从 Git 列表消失后，才删除本轮 <code>mktemp</code> 根。以下命令先验证名称、目录类型以及没有残留 worktree，再删除精确路径；不会触碰 <code>evidence_root</code>：
+
+~~~bash
+temporary_roots=(
+  "${upgrade_root:-}"
+  "${second_root:-}"
+  "${replay_root:-}"
+  "${release_verify_root:-}"
+)
+for temporary_root in "${temporary_roots[@]}"; do
+  test -n "$temporary_root" || continue
+  case "$temporary_root" in
+    /private/tmp/musicfree-vlckit-upgrade.*|\
+    /private/tmp/musicfree-vlckit-repro.*|\
+    /private/tmp/musicfree-vlc-replay.*|\
+    /private/tmp/musicfree-vlckit-release-verify.*)
+      ;;
+    *)
+      printf "refusing unexpected temporary root: %s\n" \
+        "$temporary_root" >&2
+      exit 1
+      ;;
+  esac
+  test -d "$temporary_root"
+  test ! -L "$temporary_root"
+  test -z "$(git -C "$vlckit_repo" worktree list --porcelain \
+    | awk -v root="$temporary_root" \
+      '$1 == "worktree" && index($2, root "/") == 1 {print $2}')"
+  test -z "$(git -C "$vlc_repo" worktree list --porcelain \
+    | awk -v root="$temporary_root" \
+      '$1 == "worktree" && index($2, root "/") == 1 {print $2}')"
+  du -sh "$temporary_root"
+  find "$temporary_root" -mindepth 1 -maxdepth 1 -print
+done
+
+for temporary_root in "${temporary_roots[@]}"; do
+  test -n "$temporary_root" || continue
+  test -d "$temporary_root"
+  rm -rf -- "$temporary_root"
+  test ! -e "$temporary_root"
+done
+
+git -C "$vlc_repo" worktree list
+git -C "$vlckit_repo" worktree list
+~~~
 
 不要直接递归删除未知路径，也不要清理用户原有 <code>MusicFree</code>、<code>MusicFreeVLCKit</code> 或 <code>dist</code> 内容。
 
