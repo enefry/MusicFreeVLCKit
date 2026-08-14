@@ -24,6 +24,19 @@ if ! printf '%s\n' "${release_tag}" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*
     printf '%s\n' "release tag must be a SemVer pre-release, for example 4.0.0-audio.20260814.1" >&2
     exit 64
 fi
+prerelease=${release_tag#*-}
+if ! printf '%s\n' "${prerelease}" | awk -F. '
+    {
+        for (part = 1; part <= NF; part += 1) {
+            if ($part ~ /^[0-9]+$/ && length($part) > 1 && substr($part, 1, 1) == "0") {
+                exit 1
+            }
+        }
+    }
+'; then
+    printf '%s\n' "numeric SemVer pre-release identifiers must not contain leading zeroes; use .1 instead of .01" >&2
+    exit 64
+fi
 
 if ! printf '%s\n' "${archive_name}" | grep -Eq '^[A-Za-z0-9._-]+\.xcframework\.zip$'; then
     printf '%s\n' "invalid XCFramework archive name: ${archive_name}" >&2

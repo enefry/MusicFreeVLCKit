@@ -24,7 +24,8 @@
 | 层级 | 当前值 | 便携真源 |
 | --- | --- | --- |
 | MusicFree VLCKit 分支 | <code>musicfree/audio-ios-r5</code> | 外层 Git 当前分支 |
-| MusicFree VLCKit HEAD | <code>ccc4c87d01a11e0856690163560396c1269aa50c</code> | 外层 Git 历史 |
+| r5 音频裁剪实现 | <code>ccc4c87d01a11e0856690163560396c1269aa50c</code> | 外层 Git 历史 |
+| 发布自动化与原指南基线 | <code>88d045963bbb2dc31af99d37f42a8fd25dbda5e6</code> | 外层 Git 历史；本指南修订前的已知维护 commit |
 | VLCKit 上游基线 | <code>e3774eb25c62c902e9066ba267e6416d82e83382</code>，tag <code>4.0.0-a23</code> | <code>Config/sources.lock.json</code> |
 | libVLC 上游基线 | <code>2cd8705589d3b125f236d1af695c3961fdcf6ca4</code> | <code>Config/sources.lock.json</code> 与 <code>TESTEDHASH</code> |
 | libVLC 补丁 | 28 个，<code>0001</code> 到 <code>0028</code> | <code>libvlc/patches/*.patch</code> |
@@ -35,6 +36,8 @@
 | r5 checksum | <code>873b6c4a9840565cad530ea7278b70fb3748b2136fa647abb52666ce418f6565</code> | r5 release 证据 |
 
 当前 r5 仍是工程候选，不是发布基线。它的内部视频符号审计、真实格式/协议矩阵、零联网证据、真机播放、第二次干净构建和 LGPL 发布材料仍有开放项。升级不能继承这些未完成项，也不能把 r5 的历史通过结果直接复制给新产物。
+
+当前已提交的 <code>Package.swift</code> 仍是上游通用 manifest，声明 macOS、tvOS、watchOS 和 visionOS，并指向 VideoLAN 通用 ZIP；MusicFree r5 XCFramework 实际只有 iOS Device/Simulator slice。首次 MusicFree pre-release 前必须先校正平台声明，最终 URL/checksum 再由 tag 发布流程写入。该偏差是开放门禁，不因 manifest 可以解析而自动通过。
 
 ## 3. 真源与边界
 
@@ -79,6 +82,7 @@
   -> 提交干净源码
   -> 从空缓存完整构建两次
   -> 重跑全部静态、SwiftPM、真机、协议、零联网和合规门禁
+  -> 生成 tag 专属 Package.swift，发布并回读校验不可变预发布资产
   -> 形成升级记录并进入 Review
 ~~~
 
@@ -127,20 +131,27 @@ fi
 
 ### 6.2 获取主线但不改工作树
 
-当前两个仓库都是 shallow repository。fetch 后必须用 <code>git cat-file</code> 和 <code>git merge-base</code> 确认目标对象及所需祖先历史存在；看得到一个远端 ref 不代表历史完整。
+不要假设现有 clone 是 shallow 或完整仓库。2026-08-14 当前两个本地仓库的 <code>--is-shallow-repository</code> 都是 false，但新机器、CI clone 或后续清理后的状态可能不同。fetch 后必须用 <code>git cat-file</code> 和 <code>git merge-base</code> 确认目标对象及所需祖先历史存在；看得到一个远端 ref 不代表历史完整。
 
 ~~~bash
+git -C "$vlckit_repo" rev-parse --is-shallow-repository
+upstream_vlckit_url=$(git -C "$vlckit_repo" \
+  remote get-url videolan)
+printf "videolan_remote=%s\n" "$upstream_vlckit_url"
+# Stop unless this is the reviewed official VideoLAN VLCKit repository.
+
 target_vlckit_ref=REPLACE_WITH_REVIEWED_TAG_OR_BRANCH
 git -C "$vlckit_repo" fetch videolan "$target_vlckit_ref"
-target_vlckit_commit=$(git -C "$vlckit_repo" rev-parse FETCH_HEAD)
+target_vlckit_commit=$(git -C "$vlckit_repo" \
+  rev-parse "FETCH_HEAD^{commit}")
 git -C "$vlckit_repo" cat-file -e "$target_vlckit_commit^{commit}"
 old_vlckit_base=$(jq -r .vlckit.base_commit \
   "$vlckit_repo/Config/sources.lock.json")
-git -C "$vlckit_repo" merge-base \
+git -C "$vlckit_repo" merge-base --is-ancestor \
   "$old_vlckit_base" "$target_vlckit_commit"
 ~~~
 
-如果 merge-base 因 shallow history 不可用，按需 <code>git fetch --deepen=N</code>；只有确实需要完整历史时才 <code>--unshallow</code>。不要用“最新 master”作为未记录的浮动输入，最终必须保存完整 40 位 commit。
+若 <code>videolan</code> remote 不存在，先从 VideoLAN 官方来源核对 URL，再显式添加并记录；不能把 fork 的同名 remote 当官方主线。如果 ancestry 因 shallow history 不可用，先用明确 remote/ref 扩展历史，例如 <code>git fetch --deepen=500 videolan "$target_vlckit_ref"</code>，然后重新计算 peeled commit 并重跑 <code>--is-ancestor</code>；只有 <code>--is-shallow-repository</code> 为 true 且确实需要完整历史时才对同一 remote/ref 使用 <code>--unshallow</code>。若 old base 不是 target commit 的祖先，停止并调查分支改写或目标选择，不能只因二者有共同祖先就继续。不要用“最新 master”作为未记录的浮动输入，最终必须保存完整 40 位 commit。
 
 ### 6.3 目标选择检查
 
@@ -216,7 +227,7 @@ done
 git -C "$vlckit_worktree" cherry-pick -x $custom_commits
 ~~~
 
-当前范围只有一个外层 MusicFree 提交；未来不应假设仍然只有一个。若范围包含 merge commit 或意外上游提交，停止并显式整理 MusicFree commit 清单，不要给 <code>cherry-pick</code> 猜测 mainline。
+当前已知范围至少包含 <code>ccc4c87d</code> 的音频裁剪实现和 <code>88d04596</code> 的发布自动化/文档；本指南后续提交还会继续增加数量。始终以命令实时列出的完整范围为准，不得写死 commit 数量。若范围包含 merge commit 或意外上游提交，停止并显式整理 MusicFree commit 清单，不要给 <code>cherry-pick</code> 猜测 mainline。
 
 ### 7.3 外层冲突处理原则
 
@@ -228,6 +239,7 @@ git -C "$vlckit_worktree" cherry-pick -x $custom_commits
 | Objective-C Sources | 在新版所有权和调用链上重做音频边界；不要复活上游已删除类 |
 | <code>Resources/module.modulemap</code> | 先采用上游模块布局，再限制公开 headers |
 | <code>libvlc/patches</code> | 纯上游 worktree 中的补丁是新版上游起点；旧 MusicFree 补丁稍后单独 rebase |
+| <code>Package.swift</code>/<code>Packaging</code>/<code>.github</code> | 保留新版 Swift tools/product/target 结构变化，但按音频产物真实 slice 重审平台声明；MusicFree 的 tag、checksum、合规资产发布流程不能被上游通用发布脚本静默覆盖 |
 | <code>Config</code>/<code>Scripts</code>/<code>Tests</code> | 保留审计意图，但更新字段、模块名、toolchain 和产物布局 |
 
 解决冲突时逐文件 <code>git add</code> 后执行 <code>git cherry-pick --continue</code>。禁止对上述核心文件批量使用 <code>--ours</code> 或 <code>--theirs</code>。
@@ -270,10 +282,13 @@ printf "locked_vlc_url=%s\nactual_vlc_url=%s\n" \
 
 new_vlc_ref=REPLACE_WITH_REVIEWED_TAG_OR_BRANCH
 
+git -C "$vlc_repo" rev-parse --is-shallow-repository
 git -C "$vlc_repo" fetch origin "$new_vlc_ref"
+fetched_vlc_commit=$(git -C "$vlc_repo" \
+  rev-parse "FETCH_HEAD^{commit}")
 git -C "$vlc_repo" cat-file -e "$new_vlc_base^{commit}"
 git -C "$vlc_repo" merge-base --is-ancestor \
-  "$new_vlc_base" FETCH_HEAD
+  "$new_vlc_base" "$fetched_vlc_commit"
 
 vlc_worktree="$vlckit_worktree/libvlc/vlc"
 git -C "$vlc_repo" worktree add \
@@ -285,7 +300,7 @@ git -C "$vlc_repo" worktree add \
 
 ### 8.3 先重放新版 VLCKit 自带补丁
 
-只使用纯上游 VLCKit worktree 中的补丁。先把 glob 固化为非空数组，再把完整序列一次交给 <code>git am</code>，这样解决冲突后 <code>git am --continue</code> 会继续剩余补丁：
+第 8.3 到第 10 节的命令以“新版 VLCKit 仍使用有序 mail patch 栈”为前提。先在纯上游 worktree 确认该前提；只使用纯上游 VLCKit worktree 中的补丁。把 glob 固化为非空数组，再把完整序列一次交给 <code>git am</code>，这样解决冲突后 <code>git am --continue</code> 会继续剩余补丁：
 
 ~~~bash
 upstream_patches=(
@@ -295,7 +310,9 @@ test "${#upstream_patches[@]}" -gt 0
 git -C "$vlc_worktree" am -3 "${upstream_patches[@]}"
 ~~~
 
-如果上游改用其他补丁机制，采用新机制并在升级记录中说明。全部上游补丁完成后保存边界 commit：
+如果上游改用 submodule commit、生成脚本或其他补丁机制，立即把本轮标记为 <code>migration-required</code> 并停止执行第 8.3 到第 10 节。先用单独、可 Review 的提交改造以下契约，再从第 8 节重新开始：构建脚本如何得到“上游修补后 tree”、MusicFree 自定义改动如何携带、lock 如何记录 mechanism/count/tree、clean replay 如何重建同一 tree、metadata/SBOM 如何列出修改源码。新机制必须提供与当前 <code>base + ordered patches -&gt; patched_tree</code> 等价的机器断言；不能只删掉非空数组或 <code>patch_count</code> 检查后继续。
+
+全部上游补丁完成后保存边界 commit：
 
 ~~~bash
 upstream_patched_commit=$(git -C "$vlc_worktree" rev-parse HEAD)
@@ -433,6 +450,13 @@ done
   - 经过 Review 的公开符号面
 - <code>Config/required-capabilities.yml</code>
   - 只有产品范围变化时才修改；不能为让测试通过而缩小需求
+- <code>Package.swift</code>
+  - 合并新版 Swift tools version、product/target 结构和最低系统要求
+  - 声明的平台必须与最终 XCFramework 的实际 slice 一致；当前音频产物只有 iOS Device/Simulator 时，不能沿用上游通用多平台承诺
+  - 源码集成提交中不预填尚未生成的 release URL/checksum；最终值由不可变 ZIP 生成后再写入 tag 专属 manifest
+- <code>Scripts/update-swiftpm-manifest.sh</code> 与 <code>.github/workflows/publish-swift-package-prerelease.yml</code>
+  - 若新版 <code>Package.swift</code> 改变 <code>binaryTarget</code> 布局，必须同步更新精确匹配和失败测试
+  - workflow 必须从已 Review 的 upgrade commit 构建，不得从浮动默认分支猜测源码
 
 计算新版 tree：
 
@@ -642,6 +666,7 @@ printf "first=%s\nsecond=%s\n" \
 - forbidden module/FFmpeg video component 不存在，required module 全部存在。
 - 公开 headers/module map 不重新暴露视频、发现、字幕或任意 option API。
 - SwiftPM checksum 等于 ZIP SHA-256，空 consumer 可以 import/link。
+- <code>Package.swift</code> 的平台声明与 XCFramework slice 一致，tag 中 URL/checksum 精确指向该 tag 的不可变资产。
 - Device Mach-O 与上一发布版同口径比较，体积增长有明确解释和 Review。
 
 ### 13.3 运行时和真机
@@ -663,7 +688,155 @@ Simulator 或静态模块名不能代替真机证据。上游升级会使旧 run
 - release ZIP/tag/checksum 不可变；任何二进制变化使用新版本。
 - 法律/发布 Review 未完成时保持 <code>release_ready: false</code>。
 
-## 14. 常见错误处理
+## 14. 阶段 H：SwiftPM 预发布与远端回读
+
+### 14.1 发布对象和状态边界
+
+当前 MusicFree 发布链分为三个对象：
+
+1. <code>Scripts/package-release.sh</code> 在本地或 CI 中生成 XCFramework ZIP、checksum、SwiftPM consumer 结果和内嵌 LGPL/SBOM 材料，不修改远端。
+2. <code>Scripts/update-swiftpm-manifest.sh</code> 只接受 SemVer pre-release tag，并要求 <code>Package.swift</code> 中恰好有一个名为 <code>VLCKit</code> 的 URL binary target；它把最终 tag URL 和 checksum 写入 manifest。
+3. <code>.github/workflows/publish-swift-package-prerelease.yml</code> 从明确选择的 Git ref 重新构建，创建只修改 <code>Package.swift</code> 的 manifest commit，在该 commit 上创建 annotated tag，再发布 GitHub pre-release 和资产。
+
+workflow 当前只 push tag，不把 manifest commit push 回 upgrade branch。因此必须分别记录：
+
+- <code>outer_commit</code>：workflow 实际构建的、已经 Review 的源码 commit。
+- <code>tag_commit</code>：以 <code>outer_commit</code> 为唯一 parent、只更新 <code>Package.swift</code> 的 commit；SwiftPM 通过版本 tag 读取它。
+
+不得把二者笼统写成“release commit”。也不要把 tag-only manifest commit 随手 merge 回源码分支；若团队决定同步 manifest，必须作为单独策略 Review。
+
+工程候选可在维护者明确批准后发布为 pre-release，即使真机或法律门禁仍为 <code>blocked</code>，但 release notes 和升级记录必须保留 <code>release_ready: false</code>，且 MusicFree 生产依赖不能指向它。只有 <code>build-manifest.json</code> 的 <code>release_ready</code> 为 true、法律/发布 Review 完成后，才可作为生产升级候选。当前 workflow 只支持 pre-release，不代表已经存在稳定版发布流程。
+
+### 14.2 发布前预检
+
+发布脚本和 workflow 必须先进入 <code>outer_commit</code>；仅存在于某个 dirty 工作树不算可执行发布链：
+
+~~~bash
+release_files=(
+  Package.swift
+  Scripts/package-release.sh
+  Scripts/generate-compliance.sh
+  Scripts/verify-swiftpm-consumer.sh
+  Scripts/update-swiftpm-manifest.sh
+  .github/workflows/publish-swift-package-prerelease.yml
+)
+
+for release_file in "${release_files[@]}"; do
+  git -C "$vlckit_worktree" ls-files --error-unmatch \
+    "$release_file" >/dev/null
+done
+
+test -z "$(git -C "$vlckit_worktree" \
+  status --porcelain --untracked-files=all)"
+test "$(git -C "$vlckit_worktree" rev-parse HEAD)" = "$outer_commit"
+
+for release_script in \
+  Scripts/package-release.sh \
+  Scripts/generate-compliance.sh \
+  Scripts/verify-swiftpm-consumer.sh \
+  Scripts/update-swiftpm-manifest.sh
+do
+  bash -n "$vlckit_worktree/$release_script"
+done
+
+(
+  cd "$vlckit_worktree"
+  swift package dump-package --disable-sandbox >/dev/null
+)
+~~~
+
+然后人工 Review <code>Package.swift</code>：Swift tools version、最低 iOS、product/target 名称和 binary target 必须与新产物一致。上游通用 manifest 当前可能声明多个 Apple 平台，但 MusicFree 音频 XCFramework 只有 iOS slice；发布前必须修正这种能力声明偏差，不能仅以 <code>dump-package</code> 能解析作为通过。
+
+tag 使用不可复用的 SemVer pre-release，例如 <code>4.0.0-audio.20260814.1</code>。发布前确认目标 tag 和 release 都不存在、upgrade branch 已 push 且远端 commit 与 <code>outer_commit</code> 相同。push 分支、触发 workflow、创建 tag/release 都是外部发布动作，需要维护者明确授权。
+
+若本次目的是生产升级，还必须执行：
+
+~~~bash
+jq -e '.release_ready == true' \
+  "$build_root/release/build-manifest.json" >/dev/null
+~~~
+
+pre-release 工程候选不得运行这条断言后假装通过；应在升级记录中逐项保留真实的 <code>blocked</code>/<code>not-run</code> 门禁和批准人。
+
+### 14.3 workflow 预期行为
+
+从 GitHub Actions 手动选择精确 upgrade branch/commit，输入 <code>release_tag</code>。后续 agent 必须确认 workflow 顺序仍然是：
+
+1. 验证 pre-release tag 格式，并拒绝已存在的 tag/release。
+2. 记录并检查 Xcode/iOS SDK，然后从 clean checkout 完整构建。
+3. 用固定资产名 <code>MusicFreeVLCKit.xcframework.zip</code> 打包，计算 checksum，运行 SwiftPM consumer 并生成合规 archive。
+4. 用最终 tag、资产名和 checksum 更新 <code>Package.swift</code>，再通过结构化 <code>swift package dump-package</code> 验证 URL/checksum。
+5. 拒绝除 <code>Package.swift</code> 外的 tracked file 变化；创建 manifest-only commit 和 annotated tag，只 push 该 tag。
+6. 先创建 draft pre-release，上传 ZIP、checksum、SHA-256 和合规 archive，最后取消 draft。
+
+若新版上游改变 Package/target 布局、Xcode runner、构建入口或 release asset 结构，先修改并 Review workflow，再触发发布。不能在 workflow 中用正则误匹配后静默改错 target，也不能绕过空 consumer、合规打包或远端唯一性检查。
+
+workflow 在 tag push 后失败时，不移动、不覆盖、也不复用已发布 tag。保存失败 run 和残留远端状态，修复后使用递增的新 pre-release tag。
+
+### 14.4 发布后从远端回读
+
+workflow 绿色只证明 CI 步骤返回成功。还必须从远端 tag 和 release 重新下载、解析和计算，避免用 runner 本地文件自证：
+
+~~~bash
+release_tag=REPLACE_WITH_PUBLISHED_PRERELEASE
+release_verify_root=$(mktemp -d \
+  /private/tmp/musicfree-vlckit-release-verify.XXXXXX)
+tag_worktree="$release_verify_root/source"
+
+git -C "$vlckit_repo" fetch origin tag "$release_tag"
+test "$(git -C "$vlckit_repo" cat-file -t "$release_tag")" = "tag"
+tag_commit=$(git -C "$vlckit_repo" rev-parse \
+  "$release_tag^{commit}")
+test "$(git -C "$vlckit_repo" rev-list --parents -n 1 \
+  "$tag_commit" | wc -w | tr -d " ")" -eq 2
+tag_parent=$(git -C "$vlckit_repo" rev-parse "$tag_commit^")
+test "$tag_parent" = "$outer_commit"
+test "$(git -C "$vlckit_repo" diff-tree --no-commit-id \
+  --name-only -r "$tag_commit")" = "Package.swift"
+
+git -C "$vlckit_repo" worktree add --detach \
+  "$tag_worktree" "$tag_commit"
+mkdir -p "$release_verify_root/assets"
+
+(
+  cd "$tag_worktree"
+  swift package dump-package --disable-sandbox \
+    > "$release_verify_root/package.json"
+  gh release view "$release_tag" \
+    --json tagName,isDraft,isPrerelease,url,assets \
+    > "$release_verify_root/release.json"
+  gh release download "$release_tag" \
+    --pattern MusicFreeVLCKit.xcframework.zip \
+    --dir "$release_verify_root/assets"
+)
+
+remote_archive="$release_verify_root/assets/MusicFreeVLCKit.xcframework.zip"
+remote_checksum=$(swift package compute-checksum "$remote_archive")
+manifest_checksum=$(jq -r \
+  '.targets[] | select(.name == "VLCKit") | .checksum' \
+  "$release_verify_root/package.json")
+manifest_url=$(jq -r \
+  '.targets[] | select(.name == "VLCKit") | .url' \
+  "$release_verify_root/package.json")
+release_repository=$(
+  cd "$tag_worktree"
+  gh repo view --json nameWithOwner --jq .nameWithOwner
+)
+expected_url="https://github.com/$release_repository/releases/download/$release_tag/MusicFreeVLCKit.xcframework.zip"
+
+test "$remote_checksum" = "$manifest_checksum"
+test "$manifest_url" = "$expected_url"
+jq -e \
+  --arg tag "$release_tag" \
+  '.tagName == $tag and .isDraft == false and .isPrerelease == true' \
+  "$release_verify_root/release.json" >/dev/null
+~~~
+
+还要下载并核对 <code>swiftpm-checksum.txt</code>、<code>checksums.txt</code> 和 compliance archive，随后用远端 repository + exact tag 建立一个全新 consumer 做 import/link。将 workflow run URL/ID、<code>outer_commit</code>、<code>tag_commit</code>、release URL、远端 ZIP 字节数/SHA-256/checksum、合规 archive hash 和 consumer 结果写入升级记录。
+
+验证完成后，先移除 <code>tag_worktree</code>，再按第 18 节原则处理临时目录。任何资产内容变化都必须使用新 tag；禁止替换同名 ZIP 后只更新 checksum。
+
+## 15. 常见错误处理
 
 | 情况 | 正确动作 |
 | --- | --- |
@@ -678,7 +851,7 @@ Simulator 或静态模块名不能代替真机证据。上游升级会使旧 run
 | 真机某格式回归 | 保持 blocked，修复或经产品 Review 明确变更范围 |
 | 上游完整版本可用 | 不能作为 release 静默 fallback；只能通过明确版本切换和评审 |
 
-## 15. 升级记录模板
+## 16. 升级记录模板
 
 每次升级在 <code>Documentation/upgrades/&lt;upgrade_id&gt;.md</code> 新建记录，至少包含：
 
@@ -717,6 +890,20 @@ Simulator 或静态模块名不能代替真机证据。上游升级会使旧 run
 - Device Mach-O bytes:
 - XCFramework/ZIP bytes:
 
+## SwiftPM Publication
+
+- Publication purpose: engineering pre-release / production candidate
+- Source outer commit:
+- Tag manifest commit:
+- Manifest-only diff verified:
+- Tag/version:
+- Workflow run URL/ID:
+- Release URL:
+- Remote archive bytes/SHA-256/SwiftPM checksum:
+- Compliance archive SHA-256:
+- Remote exact-tag consumer result:
+- Package platforms match artifact slices:
+
 ## Validation
 
 | Gate | Status | Evidence |
@@ -749,22 +936,25 @@ Simulator 或静态模块名不能代替真机证据。上游升级会使旧 run
 - Local libVLC helper branch/commit:
 - Portable patch path:
 - Artifact/release path:
+- Remote tag/release and immutable asset URL:
+- Source commit vs tag manifest commit:
 - Commands already run:
 - Commands not run:
 ~~~
 
 状态只能使用 <code>passed</code>、<code>failed</code>、<code>blocked</code> 或 <code>not-run</code>，并链接实际证据。不要用“应该可以”“理论通过”替代状态。
 
-## 16. 后续 agent 开工清单
+## 17. 后续 agent 开工清单
 
 后续 agent 接手时按顺序读取：
 
 1. 本文。
 2. <code>Config/sources.lock.json</code>。
 3. <code>Config/audio-ios.env</code>、<code>module-policy.yml</code>、<code>required-capabilities.yml</code>。
-4. 最新 <code>Documentation/upgrades/*.md</code>。
-5. 当前候选的 <code>release/VALIDATION-STATUS.md</code> 和 <code>build-manifest.json</code>。
-6. 外层和嵌套仓库的 <code>git status</code>、当前分支、commit 和 tree。
+4. <code>Package.swift</code>、<code>Scripts/update-swiftpm-manifest.sh</code> 和预发布 workflow。
+5. 最新 <code>Documentation/upgrades/*.md</code>。
+6. 当前候选的 <code>release/VALIDATION-STATUS.md</code> 和 <code>build-manifest.json</code>。
+7. 外层和嵌套仓库的 <code>git status</code>、当前分支、commit 和 tree。
 
 开始修改前必须输出：
 
@@ -781,7 +971,7 @@ Simulator 或静态模块名不能代替真机证据。上游升级会使旧 run
 - 沿用但尚未重跑的旧证据。
 - 因设备、服务、网络、法律或发布权限阻塞的内容。
 
-## 17. 清理
+## 18. 清理
 
 升级完成或放弃后，先确认需要的 commits、patches、logs、两次构建 evidence 和 release artifacts 已保存到 worktree 外部。执行 <code>git status</code>，如果仍有 <code>cherry-pick</code> 或 <code>am</code> sequencer，先明确选择 continue 或 abort；不能靠删除目录结束。
 
@@ -796,16 +986,19 @@ git -C "$vlckit_repo" worktree list
 
 1. 第二次构建的嵌套 <code>second_vlc_worktree</code>。
 2. 第二次构建的外层 <code>second_vlckit_worktree</code>。
-3. 尚未移除的 <code>replay_worktree</code>。
-4. 主集成中的嵌套 <code>vlc_worktree</code>。
-5. 只读 <code>upstream_vlckit_worktree</code>。
-6. 外层 <code>vlckit_worktree</code> 最后移除；它的 upgrade 分支和提交必须已确认存在。
+3. 发布后远端验证的 <code>tag_worktree</code>。
+4. 尚未移除的 <code>replay_worktree</code>。
+5. 主集成中的嵌套 <code>vlc_worktree</code>。
+6. 只读 <code>upstream_vlckit_worktree</code>。
+7. 外层 <code>vlckit_worktree</code> 最后移除；它的 upgrade 分支和提交必须已确认存在。
 
 示例：
 
 ~~~bash
 git -C "$vlc_repo" worktree remove "$second_vlc_worktree"
 git -C "$vlckit_repo" worktree remove "$second_vlckit_worktree"
+git -C "$vlckit_repo" worktree remove "$tag_worktree"
+git -C "$vlc_repo" worktree remove "$replay_worktree"
 git -C "$vlc_repo" worktree remove "$vlc_worktree"
 git -C "$vlckit_repo" worktree remove "$upstream_vlckit_worktree"
 git -C "$vlckit_repo" worktree remove "$vlckit_worktree"
