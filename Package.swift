@@ -16,8 +16,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "VLCKit",
-            url: "https://download.videolan.org/cocoapods/unstable/VLCKit-4.0-20260805-1123.zip",
-            checksum: "c0c3ae1665053db5898581efc8ee920f526643526297f7fc643599532dc2ccf5"
+            url: "https://github.com/enefry/MusicFreeVLCKit/releases/download/4.0.0-audio.20260814.3/MusicFreeVLCKit.xcframework.zip",
+            checksum: "ca6152d7c4e413c6463b29d0961911ac038b8b3c0eb97eb1b9f358228e81833f"
         )
     ]
 )
