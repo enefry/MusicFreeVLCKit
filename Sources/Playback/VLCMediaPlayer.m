@@ -714,7 +714,6 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 #if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
-            .on_rate_changed = HandleMediaPlayerRateChanged,
 #endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
@@ -1895,7 +1894,6 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 #if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
-            .on_rate_changed = HandleMediaPlayerRateChanged,
 #endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
@@ -2011,7 +2009,6 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     [self didChangeValueForKey:@"currentChapterIndex"];
 }
 
-#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)mediaPlayerCapabilitiesChanged
 {
     [self willChangeValueForKey:@"seekable"];
@@ -2020,7 +2017,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
     [self didChangeValueForKey:@"seekable"];
 }
 
-#endif
+#if !defined(MUSICFREE_AUDIO_PROFILE)
 - (void)mediaPlayerSnapshot:(NSString *)fileName
 {
     @synchronized(_snapshots) {
