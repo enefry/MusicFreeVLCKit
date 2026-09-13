@@ -39,6 +39,7 @@ fi
 
 TESTEDHASH="2cd8705589d3b125f236d1af695c3961fdcf6ca4" # libvlc base commit
 PATCHEDTREE="34c486a4b371e57b4d37bff288222c26fb86d8a0" # tree after MusicFree patch series
+TESTEDHASH="fd814768b" # libvlc hash that this version of VLCKit is build on
 
 usage()
 {
@@ -669,9 +670,6 @@ fi
 if [ "$BUILD_SIMULATOR" != "no" ]; then
     buildMobileKit iphonesimulator
 fi
-
-DEVICEARCHS=""
-SIMULATORARCHS=""
 
 if [ "$TVOS" = "yes" ]; then
     build_simulator_static_lib "appletv"

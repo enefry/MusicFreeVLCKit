@@ -67,6 +67,7 @@ NSNotificationName const VLCMediaPlayerSnapshotTakenNotification = @"VLCMediaPla
 NSNotificationName const VLCMediaPlayerProgramListChangedNotification = @"VLCMediaPlayerProgramListChangedNotification";
 NSNotificationName const VLCMediaPlayerProgramSelectionChangedNotification = @"VLCMediaPlayerProgramSelectionChangedNotification";
 NSNotificationName const VLCMediaPlayerCapabilitiesChangedNotification = @"VLCMediaPlayerCapabilitiesChangedNotification";
+NSNotificationName const VLCMediaPlayerRateChangedNotification = @"VLCMediaPlayerRateChangedNotification";
 
 static_assert(VLCAudioStereoModeUnset == libvlc_AudioStereoMode_Unset
            && VLCAudioStereoModeStereo == libvlc_AudioStereoMode_Stereo
@@ -260,6 +261,20 @@ static void HandleMediaPlayerBuffering(void *opaque, float buffering)
             VLCMediaPlayer *mediaPlayer = (VLCMediaPlayer *)object;
             if ([mediaPlayer.delegate respondsToSelector:@selector(mediaPlayerBufferingChanged:)])
                 [mediaPlayer.delegate mediaPlayerBufferingChanged:buffering];
+        }];
+    }
+}
+
+static void HandleMediaPlayerRateChanged(void *opaque, float rate)
+{
+    @autoreleasepool {
+        VLCEventsHandler *eventsHandler = (__bridge VLCEventsHandler *)opaque;
+        [eventsHandler handleEvent:^(id _Nonnull object) {
+            VLCMediaPlayer *mediaPlayer = (VLCMediaPlayer *)object;
+            NSNotification *notification = [NSNotification notificationWithName: VLCMediaPlayerRateChangedNotification object: mediaPlayer];
+            [[NSNotificationCenter defaultCenter] postNotification: notification];
+            if ([mediaPlayer.delegate respondsToSelector:@selector(mediaPlayerRateChanged:)])
+                [mediaPlayer.delegate mediaPlayerRateChanged:rate];
         }];
     }
 }
@@ -699,6 +714,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 #if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
+            .on_rate_changed = HandleMediaPlayerRateChanged,
 #endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
@@ -1879,6 +1895,7 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 #if !defined(MUSICFREE_AUDIO_PROFILE)
             .on_next_frame_status = HandleMediaPlayerNextFrameStatus,
             .on_prev_frame_status = HandleMediaPlayerPreviousFrameStatus,
+            .on_rate_changed = HandleMediaPlayerRateChanged,
 #endif
         };
         _playerInstance = libvlc_media_player_new([_privateLibrary instance],
@@ -1995,6 +2012,15 @@ static void HandleMediaPlayerPreviousFrameStatus(void *opaque, int status)
 }
 
 #if !defined(MUSICFREE_AUDIO_PROFILE)
+- (void)mediaPlayerCapabilitiesChanged
+{
+    [self willChangeValueForKey:@"seekable"];
+    [self willChangeValueForKey:@"canPause"];
+    [self didChangeValueForKey:@"canPause"];
+    [self didChangeValueForKey:@"seekable"];
+}
+
+#endif
 - (void)mediaPlayerSnapshot:(NSString *)fileName
 {
     @synchronized(_snapshots) {
