@@ -10,6 +10,7 @@ exec /usr/bin/env -i \
     BUILD_ROOT="${BUILD_ROOT:-}" \
     MUSICFREE_VLCKIT_BUILD_ROOT="${MUSICFREE_VLCKIT_BUILD_ROOT:-}" \
     MUSICFREE_VLC_BUILD_ROOT="${MUSICFREE_VLC_BUILD_ROOT:-}" \
+    MUSICFREE_VLC_SOURCE_ROOT="${MUSICFREE_VLC_SOURCE_ROOT:-}" \
     MUSICFREE_VLCKIT_RELEASE_ROOT="${MUSICFREE_VLCKIT_RELEASE_ROOT:-}" \
     MUSICFREE_VLCKIT_BASELINE_BINARY="${MUSICFREE_VLCKIT_BASELINE_BINARY:-}" \
     /usr/bin/ruby -rjson -rdigest -rfileutils -ropen3 -rpathname - "$REPO_ROOT" <<'RUBY'
@@ -245,7 +246,12 @@ end
 
 source_lock_path = File.join(repo_root, "Config", "sources.lock.json")
 source_lock = JSON.parse(File.read(source_lock_path))
-vlc_root = File.join(repo_root, "libvlc", "vlc")
+requested_vlc_source_root = ENV["MUSICFREE_VLC_SOURCE_ROOT"]
+vlc_root = if requested_vlc_source_root && !requested_vlc_source_root.empty?
+  File.expand_path(requested_vlc_source_root, repo_root)
+else
+  File.join(repo_root, "libvlc", "vlc")
+end
 requested_vlc_build_root = ENV["MUSICFREE_VLC_BUILD_ROOT"]
 vlc_build_root = if requested_vlc_build_root && !requested_vlc_build_root.empty?
   File.expand_path(requested_vlc_build_root, repo_root)

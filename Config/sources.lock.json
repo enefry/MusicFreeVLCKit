@@ -31,6 +31,6 @@
   "toolchain": {
     "xcode": "26.6",
     "ios_sdk": "26.5",
-    "deployment_target": "26.0"
+    "deployment_target": "15.0"
   }
 }

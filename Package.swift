@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VLCKit",
     platforms: [
-        .iOS(.v12),
+        .iOS(.v15),
         .macOS(.v10_13),
         .tvOS(.v12),
         .watchOS("7.4"),

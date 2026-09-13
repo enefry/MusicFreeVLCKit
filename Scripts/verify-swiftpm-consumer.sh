@@ -17,11 +17,36 @@ RELEASE_ROOT=${MUSICFREE_VLCKIT_RELEASE_ROOT:-${BUILD_ROOT}/release}
 RELEASE_ROOT=$(CDPATH= cd -- "${RELEASE_ROOT}" && pwd)
 XCFRAMEWORK="${BUILD_ROOT}/iOS/VLCKit.xcframework"
 ARCHIVE=$(find "${RELEASE_ROOT}" -maxdepth 1 -name '*.xcframework.zip' -print | sort | tail -n 1)
+DEPLOYMENT_TARGET=$(awk '/^deployment_target:/ { print $2; exit }' "${REPO_ROOT}/Config/required-capabilities.yml")
+DEPLOYMENT_TARGET=$(printf '%s' "${DEPLOYMENT_TARGET}" | tr -d '"')
 
 if [ ! -d "${XCFRAMEWORK}" ] || [ -z "${ARCHIVE}" ] || [ ! -f "${ARCHIVE}" ]; then
     printf '%s\n' "missing XCFramework or archive under ${BUILD_ROOT}" >&2
     exit 1
 fi
+if ! printf '%s\n' "${DEPLOYMENT_TARGET}" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+    printf '%s\n' "invalid iOS deployment target: ${DEPLOYMENT_TARGET}" >&2
+    exit 1
+fi
+
+verify_binary_minimum_os() {
+    binary=$1
+    expected_architectures=$2
+    build_versions=$(xcrun vtool -show-build "${binary}")
+    actual_matches=$(printf '%s\n' "${build_versions}" | awk -v target="${DEPLOYMENT_TARGET}" '$1 == "minos" && $2 == target { count += 1 } END { print count + 0 }')
+    if [ "${actual_matches}" -ne "${expected_architectures}" ]; then
+        printf '%s\n' "unexpected minimum OS version in ${binary}; expected ${expected_architectures} slices at iOS ${DEPLOYMENT_TARGET}" >&2
+        printf '%s\n' "${build_versions}" >&2
+        exit 1
+    fi
+}
+
+verify_binary_minimum_os \
+    "${XCFRAMEWORK}/ios-arm64/VLCKit.framework/VLCKit" \
+    1
+verify_binary_minimum_os \
+    "${XCFRAMEWORK}/ios-arm64_x86_64-simulator/VLCKit.framework/VLCKit" \
+    2
 
 stage_root=$(mktemp -d "${TMPDIR:-/private/tmp}/musicfree-vlckit-consumer.XXXXXX")
 trap 'rm -rf "${stage_root}"' EXIT HUP INT TERM
@@ -79,7 +104,7 @@ build_status=passed
 if ! SWIFT_MODULECACHE_PATH="${stage_root}/ModuleCache" \
     CLANG_MODULE_CACHE_PATH="${stage_root}/ModuleCache" \
     swift build --disable-sandbox --configuration release \
-        --triple arm64-apple-ios26.0 \
+        --triple "arm64-apple-ios${DEPLOYMENT_TARGET}" \
         --sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
         --product MusicFreeVLCKitConsumer > "${stage_root}/build.log" 2>&1; then
     build_status=failed
@@ -99,6 +124,7 @@ ARCHIVE_LICENSE_COUNT="${archive_license_count}" \
 PACKAGE_DUMP_STATUS="${dump_status}" \
 BUILD_STATUS="${build_status}" \
 LINK_STATUS="${link_status}" \
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
 BUILD_LOG_PATH="${stage_root}/build.log" \
 RELEASE_ROOT="${RELEASE_ROOT}" \
 /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
@@ -110,6 +136,7 @@ ARCHIVE_LICENSE_COUNT="${archive_license_count}" \
 PACKAGE_DUMP_STATUS="${dump_status}" \
 BUILD_STATUS="${build_status}" \
 LINK_STATUS="${link_status}" \
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
 BUILD_LOG_PATH="${stage_root}/build.log" \
 RELEASE_ROOT="${RELEASE_ROOT}" \
 /usr/bin/ruby -rjson -rdigest -e '
@@ -130,12 +157,12 @@ RELEASE_ROOT="${RELEASE_ROOT}" \
     "package_dump" => ENV.fetch("PACKAGE_DUMP_STATUS"),
     "swift_build" => ENV.fetch("BUILD_STATUS"),
     "ios_link" => ENV.fetch("LINK_STATUS"),
-    "target" => "arm64-apple-ios26.0",
+    "target" => "arm64-apple-ios#{ENV.fetch("DEPLOYMENT_TARGET")}",
     "sdk" => `xcrun --sdk iphoneos --show-sdk-version`.strip,
     "notes" => [
       "The consumer imports VLCKit and references its library, media, player, equalizer, playback-rate, volume, and mute APIs.",
-      "The SwiftPM 5.9 manifest declares iOS 12 for syntax compatibility; the binary and build use the iPhoneOS 26 SDK.",
-      "The linker may warn that the framework minimum OS version is newer than the package declaration; this is not an older-iOS compatibility pass."
+      "The SwiftPM manifest, XCFramework slices, and consumer build all target iOS #{ENV.fetch("DEPLOYMENT_TARGET")}.",
+      "The framework is built with the installed iPhoneOS SDK, which may be newer than its deployment target."
     ],
     "build_log_sha256" => log_sha256,
     "build_log_bytes" => File.file?(build_log) ? File.size(build_log) : 0

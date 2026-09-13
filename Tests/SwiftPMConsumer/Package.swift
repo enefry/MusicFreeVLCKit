@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MusicFreeVLCKitConsumer",
-    platforms: [.iOS(.v12)],
+    platforms: [.iOS(.v15)],
     products: [
         .executable(name: "MusicFreeVLCKitConsumer", targets: ["MusicFreeVLCKitConsumer"])
     ],
