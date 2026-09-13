@@ -37,9 +37,8 @@ if [ -z "$MAKEFLAGS" ]; then
     MAKEFLAGS="-j$(sysctl -n machdep.cpu.core_count || nproc)";
 fi
 
-TESTEDHASH="2cd8705589d3b125f236d1af695c3961fdcf6ca4" # libvlc base commit
-PATCHEDTREE="34c486a4b371e57b4d37bff288222c26fb86d8a0" # tree after MusicFree patch series
-TESTEDHASH="fd814768b" # libvlc hash that this version of VLCKit is build on
+TESTEDHASH="289a425a89" # libvlc master baseline used for the MusicFree patch series
+PATCHEDTREE="78253dc213b0ae49abcb86546ceadf24a3b2a000" # tree after MusicFree patch series
 
 usage()
 {
